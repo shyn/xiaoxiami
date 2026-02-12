@@ -10,6 +10,7 @@ export interface Config {
   cwd: string;
   sessionDir: string;
   dataDir: string;
+  permissionsDir: string;
   modelRegistry: ModelRegistry;
   defaultThinkingLevel: ThinkingLevel;
   presetOwnerId: number | null;
@@ -26,6 +27,7 @@ export async function loadConfig(): Promise<Config> {
   const cwd = process.env.AGENT_CWD ?? process.cwd();
   const dataDir = process.env.DATA_DIR ?? ".";
   const authFile = process.env.AUTH_FILE ?? `${dataDir}/auth.json`;
+  const permissionsDir = process.env.PERMISSIONS_DIR ?? `${dataDir}/permissions`;
   const sessionDir = process.env.SESSION_DIR ?? `${dataDir}/sessions`;
   const defaultThinkingLevel = (process.env.THINKING_LEVEL ?? "medium") as ThinkingLevel;
 
@@ -46,6 +48,7 @@ export async function loadConfig(): Promise<Config> {
     cwd,
     sessionDir,
     dataDir,
+    permissionsDir,
     modelRegistry,
     defaultThinkingLevel,
     presetOwnerId,

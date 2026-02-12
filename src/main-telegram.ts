@@ -1,5 +1,6 @@
 import { loadConfig } from "./config.js";
 import { AuthStore } from "./auth.js";
+import { PermissionStore } from "./permissions-store.js";
 import { createTelegramClient } from "./telegram/client.js";
 import { TelegramMessenger } from "./platforms/telegram/messenger.js";
 import { TelegramFormatter } from "./platforms/telegram/formatter.js";
@@ -12,6 +13,7 @@ import type { ConversationRef } from "./im/types.js";
 async function main(): Promise<void> {
   const config = await loadConfig();
   const auth = new AuthStore(config.authFile);
+  const permissions = new PermissionStore(config.permissionsDir);
   const tg = createTelegramClient(config.telegramToken);
   const messenger = new TelegramMessenger(tg);
   const fmt = new TelegramFormatter();
@@ -24,7 +26,7 @@ async function main(): Promise<void> {
   const createStreamSink = (convo: ConversationRef) =>
     new TelegramStreamSink(messenger, convo);
 
-  const router = new Router({ config, auth, messenger, fmt, createStreamSink });
+  const router = new Router({ config, auth, permissions, messenger, fmt, createStreamSink });
 
   if (config.presetOwnerId && !auth.isPaired()) {
     auth.pair(config.presetOwnerId);

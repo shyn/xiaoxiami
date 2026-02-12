@@ -37,9 +37,20 @@ export async function parseTelegramUpdate(
     const convo = buildConvo(cbChat.id, cbThreadId);
     const from = buildUser(cb.from);
 
+    // Parse callback_data format: "actionId:data" or "auth:allow:id" for authorization
     const colonIdx = cb.data.indexOf(":");
-    const actionId = colonIdx > 0 ? cb.data.slice(0, colonIdx) : cb.data;
-    const data = colonIdx > 0 ? cb.data.slice(colonIdx + 1) : undefined;
+    let actionId = colonIdx > 0 ? cb.data.slice(0, colonIdx) : cb.data;
+    let data = colonIdx > 0 ? cb.data.slice(colonIdx + 1) : undefined;
+
+    // Special handling for auth callbacks: format is "auth:allow:id" or "auth:deny:id"
+    // We need actionId="auth" and data="allow:id" or "deny:id"
+    if (actionId === "allow" || actionId === "deny") {
+      // This is an auth callback without the "auth" prefix, wrap it
+      data = `${actionId}:${data}`;
+      actionId = "auth";
+    }
+
+    console.log(`[transport] Callback: raw="${cb.data}" -> actionId="${actionId}", data="${data}"`);
 
     return {
       type: "action",
@@ -211,6 +222,7 @@ export async function startTelegramPolling(opts: TelegramTransportOptions): Prom
         try {
           const event = await parseTelegramUpdate(update, tg);
           if (event) {
+            console.log(`[transport] Routing event: type=${event.type}, actionId=${event.type === 'action' ? event.actionId : 'n/a'}`);
             await opts.onEvent(event);
           }
         } catch (e) {

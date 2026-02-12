@@ -230,39 +230,54 @@ export class PermissionEvaluator {
    */
   evaluate(toolName: string, args: any): PermissionLevel {
     const normalizedTool = toolName.toLowerCase();
+    const mode = this.options.config.defaultMode ?? "default";
+
+    console.log(`[permissions] Evaluating ${toolName} with mode=${mode}, args=${JSON.stringify(args)}`);
+    console.log(`[permissions] Loaded ${this.rules.length} rules:`, this.rules.map(r => `${r.level}:${r.tool}${r.specifier ? `(${r.specifier})` : ""}`).join(", ") || "none");
 
     // Check rules in order (deny -> ask -> allow)
     for (const rule of this.rules) {
       // Tool name must match
       if (rule.tool !== normalizedTool && rule.tool !== "*") {
+        console.log(`[permissions] Rule ${rule.level}:${rule.tool} does not match tool ${normalizedTool}`);
         continue;
       }
 
+      console.log(`[permissions] Tool ${normalizedTool} matches rule ${rule.level}:${rule.tool}`);
+
       // If no specifier, rule matches all uses
       if (!rule.specifier) {
+        console.log(`[permissions] Rule has no specifier, returning ${rule.level}`);
         return rule.level;
       }
 
       // Check specifier based on tool type
-      if (this.matchesSpecifier(normalizedTool, args, rule.specifier)) {
+      const specifierMatches = this.matchesSpecifier(normalizedTool, args, rule.specifier);
+      console.log(`[permissions] Checking specifier "${rule.specifier}" for ${normalizedTool}: ${specifierMatches}`);
+      if (specifierMatches) {
+        console.log(`[permissions] Specifier matches, returning ${rule.level}`);
         return rule.level;
       }
     }
 
     // Default behavior based on mode
-    const mode = this.options.config.defaultMode ?? "default";
-
     switch (mode) {
       case "bypassPermissions":
+        console.log(`[permissions] Mode is bypassPermissions, returning allow`);
         return "allow";
       case "dontAsk":
+        console.log(`[permissions] Mode is dontAsk, returning deny`);
         return "deny";
       case "acceptEdits":
         // Auto-allow edit tools, ask for others
-        return ["write", "edit"].includes(normalizedTool) ? "allow" : "ask";
+        const result = ["write", "edit"].includes(normalizedTool) ? "allow" : "ask";
+        console.log(`[permissions] Mode is acceptEdits, ${normalizedTool} is ${result === "allow" ? "edit tool, allow" : "not edit tool, ask"}`);
+        return result;
       default:
         // Default: ask for potentially dangerous tools
-        return this.isPotentiallyDangerous(normalizedTool, args) ? "ask" : "allow";
+        const isDangerous = this.isPotentiallyDangerous(normalizedTool, args);
+        console.log(`[permissions] Mode is default, ${normalizedTool} is ${isDangerous ? "dangerous, ask" : "safe, allow"}`);
+        return isDangerous ? "ask" : "allow";
     }
   }
 
@@ -331,26 +346,67 @@ export class PermissionEvaluator {
     if (denies.length > 0) {
       lines.push(fmt.bold("Deny:"));
       for (const r of denies) {
-        lines.push(`  ${r.tool}${r.specifier ? `(${r.specifier})` : ""}`);
+        const ruleText = `${r.tool}${r.specifier ? `(${r.specifier})` : ""}`;
+        lines.push(`  ${fmt.escape(ruleText)}`);
       }
     }
 
     if (asks.length > 0) {
       lines.push(fmt.bold("Ask:"));
       for (const r of asks) {
-        lines.push(`  ${r.tool}${r.specifier ? `(${r.specifier})` : ""}`);
+        const ruleText = `${r.tool}${r.specifier ? `(${r.specifier})` : ""}`;
+        lines.push(`  ${fmt.escape(ruleText)}`);
       }
     }
 
     if (allows.length > 0) {
       lines.push(fmt.bold("Allow:"));
       for (const r of allows) {
-        lines.push(`  ${r.tool}${r.specifier ? `(${r.specifier})` : ""}`);
+        const ruleText = `${r.tool}${r.specifier ? `(${r.specifier})` : ""}`;
+        lines.push(`  ${fmt.escape(ruleText)}`);
       }
     }
 
     if (lines.length === 0) {
       lines.push(fmt.italic("No custom rules configured."));
+    }
+
+    return lines.join("\n");
+  }
+
+  /**
+   * Format rules for display (raw text, no HTML)
+   */
+  formatRulesRaw(): string {
+    const lines: string[] = [];
+
+    const denies = this.rules.filter((r) => r.level === "deny");
+    const asks = this.rules.filter((r) => r.level === "ask");
+    const allows = this.rules.filter((r) => r.level === "allow");
+
+    if (denies.length > 0) {
+      lines.push("Deny:");
+      for (const r of denies) {
+        lines.push(`  ${r.tool}${r.specifier ? `(${r.specifier})` : ""}`);
+      }
+    }
+
+    if (asks.length > 0) {
+      lines.push("Ask:");
+      for (const r of asks) {
+        lines.push(`  ${r.tool}${r.specifier ? `(${r.specifier})` : ""}`);
+      }
+    }
+
+    if (allows.length > 0) {
+      lines.push("Allow:");
+      for (const r of allows) {
+        lines.push(`  ${r.tool}${r.specifier ? `(${r.specifier})` : ""}`);
+      }
+    }
+
+    if (lines.length === 0) {
+      lines.push("No custom rules configured.");
     }
 
     return lines.join("\n");
@@ -401,31 +457,47 @@ export class ToolAuthorizer {
   }
 
   /**
+   * Evaluate permission for a tool use without executing
+   */
+  evaluate(toolName: string, args: any): PermissionLevel {
+    return this.evaluator.evaluate(toolName, args);
+  }
+
+  /**
    * Wrap tool definitions with authorization layer
    */
   wrapTools(tools: ToolDefinition[]): ToolDefinition[] {
     const mode = this.evaluator.getConfig().defaultMode;
+    console.log(`[permissions] wrapTools called with mode=${mode}, tools=${tools.map(t => t.name).join(",")}`);
 
     // In bypass mode, don't wrap
     if (mode === "bypassPermissions") {
+      console.log(`[permissions] bypassPermissions mode - tools NOT wrapped`);
       return tools;
     }
+
+    console.log(`[permissions] Wrapping ${tools.length} tools with authorization`);
 
     return tools.map((tool) => {
       return {
         ...tool,
         execute: async (id: string, params: any) => {
+          console.log(`[permissions] Tool ${tool.name} executing with id=${id}`);
           const permission = this.evaluator.evaluate(tool.name, params);
+          console.log(`[permissions] Tool ${tool.name} evaluated to: ${permission}`);
 
           switch (permission) {
             case "allow":
+              console.log(`[permissions] Tool ${tool.name} allowed - executing directly`);
               return tool.execute(id, params);
             case "deny":
+              console.log(`[permissions] Tool ${tool.name} denied - throwing error`);
               throw new Error(
                 `Permission denied: ${tool.name} is blocked by permission rules`,
               );
             case "ask":
             default:
+              console.log(`[permissions] Tool ${tool.name} requires authorization - sending request`);
               return this.authorizeAndExecute(tool.name, params, () =>
                 tool.execute(id, params),
               );
@@ -444,10 +516,12 @@ export class ToolAuthorizer {
     executeFn: () => Promise<any>,
   ): Promise<any> {
     const authId = `${toolName}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    console.log(`[permissions] authorizeAndExecute created authId=${authId} for ${toolName}`);
 
     return new Promise((resolve, reject) => {
       // Set timeout for authorization
       const timeoutId = setTimeout(() => {
+        console.log(`[permissions] Authorization timeout for ${toolName} (authId=${authId})`);
         this.cleanupAuthorization(authId);
         reject(
           new Error(
@@ -488,6 +562,8 @@ export class ToolAuthorizer {
     toolName: string,
     args: any,
   ): Promise<void> {
+    console.log(`[permissions] Sending authorization request for ${toolName} (authId=${authId})`);
+
     const toolDisplay = this.formatToolDisplay(toolName, args);
 
     const text = [
@@ -508,11 +584,21 @@ export class ToolAuthorizer {
       ],
     };
 
-    const result = await this.messenger.send(this.convo, {
-      type: "text",
-      text,
-      ui,
-    });
+    console.log(`[permissions] Messenger sending with UI:`, JSON.stringify(ui));
+    console.log(`[permissions] Message text:`, text);
+
+    let result;
+    try {
+      result = await this.messenger.send(this.convo, {
+        type: "text",
+        text,
+        ui,
+      });
+      console.log(`[permissions] Authorization message sent, result:`, result);
+    } catch (err) {
+      console.error(`[permissions] Failed to send authorization message:`, err);
+      throw err;
+    }
 
     // Store message ref for cleanup
     const pending = this.pending.get(authId);
@@ -601,21 +687,29 @@ export class ToolAuthorizer {
     action: "allow" | "deny",
     authId: string,
   ): Promise<void> {
+    console.log(`[permissions] handleCallback called with action=${action}, authId=${authId}`);
+    console.log(`[permissions] Pending authorizations:`, Array.from(this.pending.keys()));
+
     const pending = this.pending.get(authId);
 
     if (!pending) {
+      console.log(`[permissions] No pending authorization found for authId=${authId}`);
       await this.messenger.ackAction?.(ackHandle, "Request expired or already handled.");
       return;
     }
+
+    console.log(`[permissions] Found pending authorization for ${pending.toolName}`);
 
     // Clear timeout
     clearTimeout(pending.timeoutId);
 
     // Resolve the pending promise
     if (action === "allow") {
+      console.log(`[permissions] Resolving with approval for ${pending.toolName}`);
       pending.resolve(true);
       await this.messenger.ackAction?.(ackHandle, "Action approved.");
     } else {
+      console.log(`[permissions] Rejecting with denial for ${pending.toolName}`);
       pending.reject(new Error(`Tool execution denied: ${pending.toolName}`));
       await this.messenger.ackAction?.(ackHandle, "Action denied.");
     }
@@ -658,9 +752,16 @@ export class ToolAuthorizer {
   }
 
   /**
-   * Get formatted rules for display
+   * Get formatted rules for display (HTML formatted)
    */
   formatRules(): string {
     return this.evaluator.formatRules(this.fmt);
+  }
+
+  /**
+   * Get formatted rules for display (raw text, no HTML)
+   */
+  formatRulesRaw(): string {
+    return this.evaluator.formatRulesRaw();
   }
 }

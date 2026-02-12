@@ -19,6 +19,7 @@
 
 import { loadModels, type ThinkingLevel } from "./models.js";
 import { AuthStore } from "./auth.js";
+import { PermissionStore } from "./permissions-store.js";
 import { WxWorkClient } from "./platforms/wxwork/client.js";
 import { WxWorkMessenger } from "./platforms/wxwork/messenger.js";
 import { WxWorkFormatter } from "./platforms/wxwork/formatter.js";
@@ -49,6 +50,7 @@ async function main(): Promise<void> {
   const cwd = process.env.AGENT_CWD ?? process.cwd();
   const dataDir = process.env.DATA_DIR ?? ".";
   const authFile = process.env.AUTH_FILE ?? `${dataDir}/auth.json`;
+  const permissionsDir = process.env.PERMISSIONS_DIR ?? `${dataDir}/permissions`;
   const sessionDir = process.env.SESSION_DIR ?? `${dataDir}/sessions`;
   const defaultThinkingLevel = (process.env.THINKING_LEVEL ?? "medium") as ThinkingLevel;
 
@@ -67,6 +69,7 @@ async function main(): Promise<void> {
     cwd,
     sessionDir,
     dataDir,
+    permissionsDir,
     modelRegistry,
     defaultThinkingLevel,
     presetOwnerId,
@@ -75,6 +78,7 @@ async function main(): Promise<void> {
   };
 
   const auth = new AuthStore(config.authFile);
+  const permissions = new PermissionStore(config.permissionsDir);
   const wxClient = new WxWorkClient({ corpId, corpSecret, agentId });
   const messenger = new WxWorkMessenger(wxClient);
   const fmt = new WxWorkFormatter();
@@ -82,7 +86,7 @@ async function main(): Promise<void> {
   const createStreamSink = (convo: ConversationRef) =>
     new WxWorkStreamSink(messenger, convo);
 
-  const router = new Router({ config, auth, messenger, fmt, createStreamSink });
+  const router = new Router({ config, auth, permissions, messenger, fmt, createStreamSink });
 
   if (presetOwnerId && !auth.isPaired()) {
     auth.pair(presetOwnerId);

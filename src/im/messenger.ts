@@ -20,7 +20,7 @@ export type UIElement =
   | { kind: "none" };
 
 export type OutMessage =
-  | { type: "text"; text: string; ui?: UIElement }
+  | { type: "text"; text: string; ui?: UIElement; parseMode?: "html" | "none" }
   | { type: "image"; bytes: Uint8Array; filename?: string; caption?: string }
   | { type: "file"; bytes: Uint8Array; filename: string; caption?: string };
 

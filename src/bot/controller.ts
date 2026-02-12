@@ -17,12 +17,14 @@ import { mkdir } from "node:fs/promises";
 import type { ModelConfig, ThinkingLevel } from "../models.js";
 import { TmuxHandler } from "./tmux-handler.js";
 import { ToolAuthorizer, type PermissionConfig, type PermissionMode } from "./permissions.js";
+import type { PermissionStore } from "../permissions-store.js";
 
 export class ChatController {
   private messenger: Messenger;
   private fmt: Formatter;
   private convo: ConversationRef;
   private config: Config;
+  private permissions: PermissionStore;
   private managed: ManagedSession | null = null;
 
   private streamSink: StreamSink;
@@ -43,18 +45,38 @@ export class ChatController {
     convo: ConversationRef,
     config: Config,
     createStreamSink: (convo: ConversationRef) => StreamSink,
+    permissions: PermissionStore,
   ) {
     this.messenger = messenger;
     this.fmt = fmt;
     this.convo = convo;
     this.config = config;
+    this.permissions = permissions;
 
     this.streamSink = createStreamSink(convo);
     this.tmuxHandler = new TmuxHandler(messenger, fmt, convo, config.tmuxDefaultSocket, config.tmuxSocketDir);
+
+    // Load permission config from store
+    const permissionConfig = this.permissions.getConfig(this.conversationKey);
+    console.log(`[controller] ChatController created for ${this.conversationKey}, permissionConfig:`, permissionConfig);
     this.toolAuthorizer = new ToolAuthorizer(messenger, fmt, convo, {
       cwd: config.cwd,
       timeoutMs: 5 * 60 * 1000, // 5 minutes
+      config: permissionConfig,
     });
+    console.log(`[controller] ToolAuthorizer initialized with mode=${permissionConfig.defaultMode || "default"}`);
+  }
+
+  private get conversationKey(): string {
+    return `${this.convo.conversationId}:${this.convo.threadId ?? ""}`;
+  }
+
+  /**
+   * Update permission config and persist to disk.
+   */
+  private savePermissionConfig(config: PermissionConfig): void {
+    this.toolAuthorizer.setConfig(config);
+    this.permissions.setConfig(this.conversationKey, config);
   }
 
   private get sessionDir(): string {
@@ -91,7 +113,7 @@ export class ChatController {
     await mkdir(this.sessionDir, { recursive: true });
 
     const tmuxOpts = { socketPath: this.config.tmuxDefaultSocket };
-    const tmuxToolDefs = this.toolAuthorizer.wrapTools(createTmuxTools(tmuxOpts));
+    const tmuxToolDefs = createTmuxTools(tmuxOpts);
 
     const defaultModel = this.config.modelRegistry.getDefault();
     const modelKey = defaultModel.key;
@@ -353,6 +375,11 @@ export class ChatController {
   // ── Agent event handlers ───────────────────────────────────────────
 
   private handleToolStart(name: string, args: any): void {
+    // Skip notification if the tool will need authorization — the auth prompt
+    // is shown instead. SDK fires tool_execution_start BEFORE tool.execute().
+    const permission = this.toolAuthorizer.evaluate(name, args);
+    if (permission === "ask") return;
+
     let message = '';
 
     try {
@@ -668,7 +695,9 @@ export class ChatController {
 
   private async handleAuthCallback(ackHandle: unknown, parts: string[]): Promise<void> {
     const [action, authId] = parts;
+    console.log(`[controller] handleAuthCallback: action=${action}, authId=${authId}`);
     if (!authId || (action !== "allow" && action !== "deny")) {
+      console.log(`[controller] Invalid authorization request: parts=${JSON.stringify(parts)}`);
       await this.messenger.ackAction?.(ackHandle, "Invalid authorization request.");
       return;
     }
@@ -734,27 +763,27 @@ export class ChatController {
       }
     }
 
-    // Show current permissions
+    // Show current permissions (use raw text to avoid HTML parsing issues with rule syntax)
     const lines = [
-      this.fmt.bold("🔐 Permissions"),
+      "🔐 Permissions",
       "",
-      `Mode: ${this.fmt.code(config.defaultMode || "default")}`,
+      `Mode: ${config.defaultMode || "default"}`,
       "",
     ];
 
-    const rulesText = this.toolAuthorizer.formatRules();
+    const rulesText = this.toolAuthorizer.formatRulesRaw();
     lines.push(rulesText);
 
     lines.push(
       "",
-      this.fmt.bold("Usage:"),
+      "Usage:",
       "/permissions allow <rule> - Auto-approve matching tools",
       "/permissions ask <rule> - Prompt for matching tools",
       "/permissions deny <rule> - Block matching tools",
       "/permissions mode <mode> - Set default mode",
       "/permissions clear - Clear all custom rules",
       "",
-      this.fmt.bold("Rule Syntax:"),
+      "Rule Syntax:",
       "• Tool - matches all uses (e.g., bash, write)",
       "• Tool(specifier) - matches specific uses",
       "• bash(npm run *) - matches npm run commands",
@@ -766,6 +795,7 @@ export class ChatController {
       type: "text",
       text: lines.join("\n"),
       ui: this.permissionsUI(),
+      parseMode: "none",
     });
   }
 
@@ -781,7 +811,7 @@ export class ChatController {
       config.deny = [...(config.deny || []), rule];
     }
 
-    this.toolAuthorizer.setConfig(config);
+    this.savePermissionConfig(config);
 
     await this.messenger.send(this.convo, {
       type: "text",
@@ -792,7 +822,7 @@ export class ChatController {
   private async setPermissionMode(mode: PermissionMode): Promise<void> {
     const config = this.toolAuthorizer.getConfig();
     config.defaultMode = mode;
-    this.toolAuthorizer.setConfig(config);
+    this.savePermissionConfig(config);
 
     const descriptions: Record<PermissionMode, string> = {
       default: "Prompt for permission on first use of dangerous tools",
@@ -812,7 +842,7 @@ export class ChatController {
   }
 
   private async clearPermissionRules(): Promise<void> {
-    this.toolAuthorizer.setConfig({ defaultMode: this.toolAuthorizer.getConfig().defaultMode });
+    this.savePermissionConfig({ defaultMode: this.toolAuthorizer.getConfig().defaultMode });
 
     await this.messenger.send(this.convo, {
       type: "text",

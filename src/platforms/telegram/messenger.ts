@@ -52,11 +52,14 @@ export class TelegramMessenger implements Messenger {
 
     switch (msg.type) {
       case "text": {
+        const replyMarkup = buildReplyMarkup(msg.ui);
+        console.log(`[telegram:messenger] Sending message to ${chatId}, parse_mode=${msg.parseMode === "none" ? "none" : "HTML"}, reply_markup=`, JSON.stringify(replyMarkup));
         const result = await this.tg.sendMessage(chatId, msg.text, {
-          parse_mode: "HTML",
+          parse_mode: msg.parseMode === "none" ? undefined : "HTML",
           message_thread_id: threadId,
-          reply_markup: buildReplyMarkup(msg.ui),
+          reply_markup: replyMarkup,
         });
+        console.log(`[telegram:messenger] Message sent, message_id=${result.message_id}`);
         return { messageRef: String(result.message_id) };
       }
       case "image": {
@@ -83,7 +86,7 @@ export class TelegramMessenger implements Messenger {
     const chatId = parseChatId(convo);
     const messageId = Number(messageRef);
     await this.tg.editMessageText(chatId, messageId, msg.text, {
-      parse_mode: "HTML",
+      parse_mode: msg.parseMode === "none" ? undefined : "HTML",
       reply_markup: buildReplyMarkup(msg.ui),
     });
   }

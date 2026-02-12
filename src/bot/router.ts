@@ -4,11 +4,13 @@ import type { StreamSink } from "../im/stream-sink.js";
 import type { ConversationRef, InboundEvent, UserRef } from "../im/types.js";
 import type { Config } from "../config.js";
 import { AuthStore } from "../auth.js";
+import { PermissionStore } from "../permissions-store.js";
 import { ChatController } from "./controller.js";
 
 export interface RouterOptions {
   config: Config;
   auth: AuthStore;
+  permissions: PermissionStore;
   messenger: Messenger;
   fmt: Formatter;
   createStreamSink: (convo: ConversationRef) => StreamSink;
@@ -17,6 +19,7 @@ export interface RouterOptions {
 export class Router {
   private config: Config;
   private auth: AuthStore;
+  private permissions: PermissionStore;
   private messenger: Messenger;
   private fmt: Formatter;
   private createStreamSink: (convo: ConversationRef) => StreamSink;
@@ -31,6 +34,7 @@ export class Router {
   constructor(opts: RouterOptions) {
     this.config = opts.config;
     this.auth = opts.auth;
+    this.permissions = opts.permissions;
     this.messenger = opts.messenger;
     this.fmt = opts.fmt;
     this.createStreamSink = opts.createStreamSink;
@@ -51,6 +55,7 @@ export class Router {
         convo,
         this.config,
         this.createStreamSink,
+        this.permissions,
       );
       this.controllers.set(key, ctrl);
     }
@@ -107,14 +112,25 @@ export class Router {
     event: Extract<InboundEvent, { type: "action" }>,
   ): Promise<void> {
     const userId = Number(event.from.userId);
+    console.log(`[router] handleAction: actionId=${event.actionId}, data=${event.data}, userId=${userId}`);
     if (!this.auth.isAuthorized(userId)) {
       await this.messenger.ackAction?.(event.ackHandle, "Unauthorized.", true);
       return;
     }
     if (!event.data) return;
 
+    // Auth callbacks must bypass the queue to avoid deadlock:
+    // the queued prompt task is blocked waiting for this callback to resolve.
+    if (event.actionId === "auth") {
+      const ctrl = this.getController(event.convo);
+      console.log(`[router] Auth callback bypass queue: data=${event.data}`);
+      await ctrl.handleCallback(event.ackHandle, event.actionId, event.data);
+      return;
+    }
+
     this.enqueue(event.convo, async () => {
       const ctrl = this.getController(event.convo);
+      console.log(`[router] Routing to controller.handleCallback: actionId=${event.actionId}, data=${event.data}`);
       await ctrl.handleCallback(event.ackHandle, event.actionId, event.data);
     });
   }
