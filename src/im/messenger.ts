@@ -35,5 +35,4 @@ export interface Messenger {
   deleteMessage?(convo: ConversationRef, messageRef: string): Promise<void>;
   ackAction?(ackHandle: unknown, text?: string, alert?: boolean): Promise<void>;
   sendTyping?(convo: ConversationRef): Promise<void>;
-  sendDraft?(convo: ConversationRef, draftId: number, text: string): Promise<boolean>;
 }

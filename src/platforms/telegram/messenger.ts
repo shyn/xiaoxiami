@@ -33,7 +33,7 @@ function parseThreadId(convo: ConversationRef): number | undefined {
 export class TelegramMessenger implements Messenger {
   readonly capabilities: MessengerCapabilities = {
     supportsEdit: true,
-    supportsDraft: true,
+    supportsDraft: false,
     supportsButtons: true,
     supportsThreads: true,
     supportsDelete: true,
@@ -110,12 +110,4 @@ export class TelegramMessenger implements Messenger {
     });
   }
 
-  async sendDraft(convo: ConversationRef, draftId: number, text: string): Promise<boolean> {
-    const chatId = parseChatId(convo);
-    const threadId = parseThreadId(convo);
-    return this.tg.sendMessageDraft(chatId, draftId, text, {
-      parse_mode: "HTML",
-      message_thread_id: threadId,
-    });
-  }
 }

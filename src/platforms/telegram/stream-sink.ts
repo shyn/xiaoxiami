@@ -3,17 +3,11 @@ import type { ConversationRef } from "../../im/types.js";
 import type { Messenger } from "../../im/messenger.js";
 import { escapeHtml } from "../../telegram/format.js";
 
-const EDIT_THROTTLE_MS = 400;
-const MAX_DRAFT_LEN = 4000;
-
 export class TelegramStreamSink implements StreamSink {
   private messenger: Messenger;
   private convo: ConversationRef;
 
   private _buffer = "";
-  private currentMsgRef: string | null = null;
-  private editTimer: ReturnType<typeof setTimeout> | null = null;
-  private draftId = 0;
 
   constructor(messenger: Messenger, convo: ConversationRef) {
     this.messenger = messenger;
@@ -26,13 +20,13 @@ export class TelegramStreamSink implements StreamSink {
 
   start(): void {
     this._buffer = "";
-    this.currentMsgRef = null;
-    this.draftId = Math.floor(Math.random() * 2147483646) + 1;
+    // Send typing indicator at the start of streaming
+    this.messenger.sendTyping?.(this.convo).catch(() => {});
   }
 
   onDelta(delta: string): void {
     this._buffer += delta;
-    this.scheduleEdit();
+    // Buffer the content but don't send - we'll send the full message at the end
   }
 
   async toolNotice(text: string): Promise<void> {
@@ -42,120 +36,32 @@ export class TelegramStreamSink implements StreamSink {
   }
 
   async finalize(error?: string): Promise<string | null> {
-    if (this.editTimer) {
-      clearTimeout(this.editTimer);
-      this.editTimer = null;
-    }
-
     if (error && this._buffer.length === 0) {
-      this.draftId = 0;
       await this.messenger.send(this.convo, { type: "text", text: `⚠️ <b>Model error:</b> ${escapeHtml(error)}` });
       return null;
     }
 
     if (this._buffer) {
       const finalText = escapeHtml(this._buffer);
-      if (this.draftId) {
-        const maxChars = this.messenger.capabilities.maxTextChars;
-        if (finalText.length > maxChars) {
-          const chunks = chunkText(finalText, maxChars);
-          for (const chunk of chunks) {
-            this.messenger.send(this.convo, { type: "text", text: chunk }).catch(() => {});
-          }
-        } else {
-          this.messenger.send(this.convo, { type: "text", text: finalText }).catch(() => {});
+      const maxChars = this.messenger.capabilities.maxTextChars;
+
+      if (finalText.length > maxChars) {
+        const chunks = chunkText(finalText, maxChars);
+        for (const chunk of chunks) {
+          await this.messenger.send(this.convo, { type: "text", text: chunk }).catch(() => {});
         }
       } else {
-        await this.flushStreamEdit();
+        await this.messenger.send(this.convo, { type: "text", text: finalText }).catch(() => {});
       }
     }
 
     const pending = this._buffer;
-    this.draftId = 0;
     this._buffer = "";
-    this.currentMsgRef = null;
     return pending || null;
   }
 
   resetState(): void {
     this._buffer = "";
-    this.currentMsgRef = null;
-    if (this.editTimer) {
-      clearTimeout(this.editTimer);
-      this.editTimer = null;
-    }
-  }
-
-  private scheduleEdit(): void {
-    if (this.editTimer) return;
-    this.editTimer = setTimeout(() => {
-      this.editTimer = null;
-      this.flushStream();
-    }, EDIT_THROTTLE_MS);
-  }
-
-  private async flushStream(): Promise<void> {
-    if (!this._buffer) return;
-
-    const text = this._buffer;
-
-    if (this.draftId && this.messenger.sendDraft) {
-      try {
-        const escaped = escapeHtml(text);
-        const draftText = escaped.length > MAX_DRAFT_LEN ? "…" + escaped.slice(-MAX_DRAFT_LEN) : escaped;
-        await this.messenger.sendDraft(this.convo, this.draftId, draftText);
-      } catch {
-        this.draftId = 0;
-        await this.flushStreamEdit();
-      }
-      return;
-    }
-
-    await this.flushStreamEdit();
-  }
-
-  private async flushStreamEdit(): Promise<void> {
-    const text = escapeHtml(this._buffer);
-    if (!text) return;
-
-    const maxChars = this.messenger.capabilities.maxTextChars;
-
-    if (text.length > maxChars) {
-      const chunks = chunkText(text, maxChars);
-
-      if (this.currentMsgRef && chunks.length > 0 && this.messenger.edit) {
-        try {
-          await this.messenger.edit(this.convo, this.currentMsgRef, { type: "text", text: chunks[0] });
-        } catch { /* rate limit or message too old */ }
-        this.currentMsgRef = null;
-      }
-
-      for (let i = this.currentMsgRef ? 1 : 0; i < chunks.length; i++) {
-        try {
-          const result = await this.messenger.send(this.convo, { type: "text", text: chunks[i] });
-          if (i === chunks.length - 1) {
-            this.currentMsgRef = result.messageRef ?? null;
-          }
-        } catch { /* rate limit */ }
-      }
-
-      this._buffer = chunks[chunks.length - 1] ?? "";
-      return;
-    }
-
-    try {
-      if (this.currentMsgRef && this.messenger.edit) {
-        await this.messenger.edit(this.convo, this.currentMsgRef, { type: "text", text });
-      } else {
-        const result = await this.messenger.send(this.convo, { type: "text", text });
-        this.currentMsgRef = result.messageRef ?? null;
-      }
-    } catch {
-      try {
-        const result = await this.messenger.send(this.convo, { type: "text", text });
-        this.currentMsgRef = result.messageRef ?? null;
-      } catch { /* give up for this cycle */ }
-    }
   }
 }
 

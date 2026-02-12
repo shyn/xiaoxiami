@@ -21,7 +21,6 @@ export interface TelegramClient {
   sendDocument(chatId: number, doc: Uint8Array, filename: string, options?: SendDocOptions): Promise<TgMessage>;
   answerCallbackQuery(callbackQueryId: string, options?: AnswerCallbackOptions): Promise<boolean>;
   getUpdates(offset?: number, timeout?: number): Promise<TgUpdate[]>;
-  sendMessageDraft(chatId: number, draftId: number, text: string, options?: SendDraftOptions): Promise<boolean>;
   sendChatAction(chatId: number, action: string, options?: { message_thread_id?: number }): Promise<boolean>;
   deleteWebhook(): Promise<boolean>;
   setMyCommands(commands: Array<{ command: string; description: string }>): Promise<boolean>;
@@ -58,11 +57,6 @@ export interface SendPhotoOptions {
 export interface SendDocOptions {
   message_thread_id?: number;
   caption?: string;
-  parse_mode?: "MarkdownV2" | "HTML";
-}
-
-export interface SendDraftOptions {
-  message_thread_id?: number;
   parse_mode?: "MarkdownV2" | "HTML";
 }
 
@@ -185,8 +179,6 @@ export function scopedClient(client: TelegramClient, threadId: number | undefine
       client.answerCallbackQuery(id, options),
     getUpdates: (offset?, timeout?) =>
       client.getUpdates(offset, timeout),
-    sendMessageDraft: (chatId, draftId, text, options?) =>
-      client.sendMessageDraft(chatId, draftId, text, { ...options, message_thread_id: threadId }),
     sendChatAction: (chatId, action, options?) =>
       client.sendChatAction(chatId, action, { ...options, message_thread_id: threadId }),
     deleteWebhook: () => client.deleteWebhook(),
@@ -366,15 +358,6 @@ export function createTelegramClient(token: string): TelegramClient {
         allowed_updates: ["message", "callback_query"],
       });
       return result as TgUpdate[];
-    },
-
-    async sendMessageDraft(chatId, draftId, text, options) {
-      return (await call("sendMessageDraft", {
-        chat_id: chatId,
-        draft_id: draftId,
-        text,
-        ...options,
-      })) as boolean;
     },
 
     async sendChatAction(chatId, action, options?) {
