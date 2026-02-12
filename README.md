@@ -31,6 +31,7 @@ Auth state is persisted to `auth.json` (configurable via `AUTH_FILE`). Edit it d
 - `/reset` — Reset agent session
 - `/abort` — Abort current operation
 - `/status` — Show status
+- `/permissions` — Configure tool permissions (allow/ask/deny rules)
 
 ### tmux
 - `/tmux` — List sessions (with inline buttons)
@@ -72,6 +73,28 @@ Telegram ←→ ChatController ←→ Pi Agent SDK
 - Image input support (send photos to the agent)
 - Forum Topic support (dedicated tmux terminals per topic)
 - Message persistence (JSONL daily rotation with auto-cleanup)
+- **Tool permission system** — Fine-grained control over what tools the agent can use (allow/ask/deny rules)
+
+### Tool Permissions
+
+The bot includes a flexible permission system following Claude Code's design. You can control which tools the agent can use with fine-grained rules.
+
+**Permission Commands:**
+- `/permissions` — View current rules and settings
+- `/permissions allow <rule>` — Auto-approve matching tools
+- `/permissions ask <rule>` — Prompt for confirmation
+- `/permissions deny <rule>` — Block matching tools
+- `/permissions mode <mode>` — Set default mode (default, acceptEdits, dontAsk, bypassPermissions)
+
+**Rule Examples:**
+```
+/permissions allow bash(npm run *)
+/permissions deny read(~/.env)
+/permissions ask bash(git push *)
+/permissions allow edit(./src/**/*.ts)
+```
+
+See [docs/permissions.md](docs/permissions.md) for detailed documentation.
 
 ## Documentation
 
@@ -81,6 +104,7 @@ See the [docs/](docs/) directory for detailed documentation:
 - [config.md](docs/config.md) — 配置参考（环境变量、文件、常量）
 - [auth.md](docs/auth.md) — 认证系统（owner pairing、用户管理）
 - [models.md](docs/models.md) — 模型配置与切换
+- [permissions.md](docs/permissions.md) — 工具权限系统（allow/ask/deny 规则）
 - [streaming.md](docs/streaming.md) — 流式输出机制
 - [sessions.md](docs/sessions.md) — Agent 会话管理
 - [tmux.md](docs/tmux.md) — tmux 终端功能

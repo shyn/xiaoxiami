@@ -78,6 +78,7 @@ Messenger Layer (Platform Outbound)
 | `src/bot/router.ts` | Auth, controller lifecycle, per-conversation promise queues |
 | `src/bot/controller.ts` | Command routing, agent events, UI building |
 | `src/bot/tmux-handler.ts` | tmux terminal mode and session management |
+| `src/bot/permissions.ts` | Tool permission evaluator and authorizer |
 | `src/agent/session.ts` | SDK session wrapper, event bridging, model fallback |
 | `src/models.ts` | Multi-model registry and ModelStore |
 | `src/auth.ts` | Owner pairing and user authorization |
@@ -135,6 +136,34 @@ Models are configured in `models.json`:
 | Telegram max chars | 3800 | `config.ts` (below 4096 limit) |
 | Edit throttle | 400ms | `config.ts` |
 | API timeout | 60s | `telegram/client.ts` |
+| Auth timeout | 5 min | `bot/permissions.ts` |
+
+## Tool Permissions
+
+The bot includes a flexible permission system following Claude Code's design:
+
+**Permission Levels:**
+- `allow` — Auto-approve matching tool uses
+- `ask` — Prompt user for confirmation (Telegram inline buttons)
+- `deny` — Block matching tool uses
+
+**Rule Syntax:** `Tool` or `Tool(specifier)`
+- `bash(npm run *)` — Match npm commands
+- `edit(./src/**/*.ts)` — Match TypeScript file edits
+- `read(~/.env)` — Match reading .env file
+
+**Evaluation Order:** `deny` → `ask` → `allow` (first match wins)
+
+**Key Classes:**
+- `PermissionEvaluator` — Evaluates rules against tool calls
+- `ToolAuthorizer` — Wraps tools with authorization layer, handles Telegram UI
+
+**Commands:**
+- `/permissions` — View/manage rules
+- `/permissions allow|ask|deny <rule>` — Add rules
+- `/permissions mode <mode>` — Set default mode
+
+See `docs/permissions.md` for full documentation.
 
 ## Skills
 
