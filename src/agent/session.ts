@@ -53,10 +53,15 @@ export interface CreateSessionOptions {
   sessionDir: string;
   modelKey: string;
   thinkingLevel: ThinkingLevel;
+  /**
+   * Optional function to wrap/override tools (both built-in and custom).
+   * Used for authorization/security layers.
+   */
+  wrapTools?: (tools: ToolDefinition[]) => ToolDefinition[];
 }
 
 export async function createManagedSession(opts: CreateSessionOptions): Promise<ManagedSession> {
-  const { config, tmuxTools, callbacks, sessionDir, modelKey, thinkingLevel } = opts;
+  const { config, tmuxTools, callbacks, sessionDir, modelKey, thinkingLevel, wrapTools } = opts;
 
   const authStorage = new AuthStorage();
   const modelStore = new ModelStore(config.modelRegistry, authStorage);
@@ -94,6 +99,22 @@ export async function createManagedSession(opts: CreateSessionOptions): Promise<
     customTools: tmuxTools,
     resourceLoader,
   });
+
+  // Wrap tools with authorization/security layer if provided
+  if (wrapTools) {
+    try {
+      // Access the agent's tools through internal API and wrap them
+      const agent = (session as any).agent;
+      if (agent?.tools) {
+        const originalTools = agent.tools;
+        const wrappedTools = wrapTools(originalTools);
+        agent.tools = wrappedTools;
+        console.log(`[agent] Tools wrapped with authorization layer (${originalTools.length} tools)`);
+      }
+    } catch (e) {
+      console.error("[agent] Failed to wrap tools:", e);
+    }
+  }
 
   session.subscribe((event) => {
     switch (event.type) {

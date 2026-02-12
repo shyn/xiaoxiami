@@ -16,6 +16,7 @@ import { SessionManager, type ToolDefinition, type SessionInfo } from "@mariozec
 import { mkdir } from "node:fs/promises";
 import type { ModelConfig, ThinkingLevel } from "../models.js";
 import { TmuxHandler } from "./tmux-handler.js";
+import { ToolAuthorizer, type PermissionConfig, type PermissionMode } from "./permissions.js";
 
 export class ChatController {
   private messenger: Messenger;
@@ -26,6 +27,7 @@ export class ChatController {
 
   private streamSink: StreamSink;
   private tmuxHandler: TmuxHandler;
+  private toolAuthorizer: ToolAuthorizer;
 
   private isAgentRunning = false;
   private pendingInput: string | null = null;
@@ -49,6 +51,10 @@ export class ChatController {
 
     this.streamSink = createStreamSink(convo);
     this.tmuxHandler = new TmuxHandler(messenger, fmt, convo, config.tmuxDefaultSocket, config.tmuxSocketDir);
+    this.toolAuthorizer = new ToolAuthorizer(messenger, fmt, convo, {
+      cwd: config.cwd,
+      timeoutMs: 5 * 60 * 1000, // 5 minutes
+    });
   }
 
   private get sessionDir(): string {
@@ -85,7 +91,7 @@ export class ChatController {
     await mkdir(this.sessionDir, { recursive: true });
 
     const tmuxOpts = { socketPath: this.config.tmuxDefaultSocket };
-    const tmuxToolDefs = createTmuxTools(tmuxOpts);
+    const tmuxToolDefs = this.toolAuthorizer.wrapTools(createTmuxTools(tmuxOpts));
 
     const defaultModel = this.config.modelRegistry.getDefault();
     const modelKey = defaultModel.key;
@@ -109,6 +115,7 @@ export class ChatController {
       sessionDir: this.sessionDir,
       modelKey,
       thinkingLevel,
+      wrapTools: (tools) => this.toolAuthorizer.wrapTools(tools),
     });
 
     if (!autoResume) {
@@ -157,6 +164,7 @@ export class ChatController {
     }
     this.streamSink.resetState();
     this.isAgentRunning = false;
+    this.toolAuthorizer.dispose();
   }
 
   // ── User message handling ──────────────────────────────────────────
@@ -285,6 +293,9 @@ export class ChatController {
       case "/status":
         await this.showStatus();
         break;
+      case "/permissions":
+        await this.handlePermissionsCommand(args);
+        break;
       default:
         await this.messenger.send(this.convo, {
           type: "text",
@@ -323,6 +334,12 @@ export class ChatController {
             await this.abortAgent();
             await this.messenger.ackAction?.(ackHandle, "Agent aborted.");
           }
+          break;
+        case "auth":
+          await this.handleAuthCallback(ackHandle, parts);
+          break;
+        case "perm":
+          await this.handlePermissionsCallback(ackHandle, parts);
           break;
         default:
           await this.messenger.ackAction?.(ackHandle, "Unknown action.");
@@ -649,6 +666,217 @@ export class ChatController {
     }
   }
 
+  private async handleAuthCallback(ackHandle: unknown, parts: string[]): Promise<void> {
+    const [action, authId] = parts;
+    if (!authId || (action !== "allow" && action !== "deny")) {
+      await this.messenger.ackAction?.(ackHandle, "Invalid authorization request.");
+      return;
+    }
+    await this.toolAuthorizer.handleCallback(ackHandle, action, authId);
+  }
+
+  private async handlePermissionsCommand(args: string): Promise<void> {
+    const config = this.toolAuthorizer.getConfig();
+
+    if (args.trim()) {
+      // Handle subcommands like "add", "remove", "mode"
+      const parts = args.trim().split(/\s+/);
+      const subcommand = parts[0].toLowerCase();
+
+      switch (subcommand) {
+        case "allow":
+        case "ask":
+        case "deny":
+          if (parts.length < 2) {
+            await this.messenger.send(this.convo, {
+              type: "text",
+              text: `Usage: /permissions ${subcommand} <rule>\nExample: /permissions ${subcommand} bash(npm run *)`,
+            });
+            return;
+          }
+          const rule = parts.slice(1).join(" ");
+          await this.addPermissionRule(subcommand, rule);
+          return;
+
+        case "mode":
+          if (parts.length < 2) {
+            const modes: PermissionMode[] = ["default", "acceptEdits", "dontAsk", "bypassPermissions"];
+            await this.messenger.send(this.convo, {
+              type: "text",
+              text: [
+                this.fmt.bold("Permission Modes:"),
+                "",
+                "• default - Prompt for permission on first use of dangerous tools",
+                "• acceptEdits - Auto-accept file edits, ask for other dangerous tools",
+                "• dontAsk - Auto-deny unless pre-approved via rules",
+                "• bypassPermissions - Skip all permission prompts (dangerous!)",
+                "",
+                `Current: ${this.fmt.code(config.defaultMode || "default")}`,
+                "",
+                "Use /permissions mode <mode> to change.",
+              ].join("\n"),
+            });
+            return;
+          }
+          await this.setPermissionMode(parts[1] as PermissionMode);
+          return;
+
+        case "clear":
+          await this.clearPermissionRules();
+          return;
+
+        default:
+          await this.messenger.send(this.convo, {
+            type: "text",
+            text: `Unknown subcommand: ${subcommand}\n\nAvailable: allow, ask, deny, mode, clear`,
+          });
+          return;
+      }
+    }
+
+    // Show current permissions
+    const lines = [
+      this.fmt.bold("🔐 Permissions"),
+      "",
+      `Mode: ${this.fmt.code(config.defaultMode || "default")}`,
+      "",
+    ];
+
+    const rulesText = this.toolAuthorizer.formatRules();
+    lines.push(rulesText);
+
+    lines.push(
+      "",
+      this.fmt.bold("Usage:"),
+      "/permissions allow <rule> - Auto-approve matching tools",
+      "/permissions ask <rule> - Prompt for matching tools",
+      "/permissions deny <rule> - Block matching tools",
+      "/permissions mode <mode> - Set default mode",
+      "/permissions clear - Clear all custom rules",
+      "",
+      this.fmt.bold("Rule Syntax:"),
+      "• Tool - matches all uses (e.g., bash, write)",
+      "• Tool(specifier) - matches specific uses",
+      "• bash(npm run *) - matches npm run commands",
+      "• edit(./src/**/*.ts) - matches TypeScript edits",
+      "• read(~/.env) - matches reading .env file",
+    );
+
+    await this.messenger.send(this.convo, {
+      type: "text",
+      text: lines.join("\n"),
+      ui: this.permissionsUI(),
+    });
+  }
+
+  private async addPermissionRule(level: "allow" | "ask" | "deny", rule: string): Promise<void> {
+    const config = this.toolAuthorizer.getConfig();
+
+    // Add to appropriate list
+    if (level === "allow") {
+      config.allow = [...(config.allow || []), rule];
+    } else if (level === "ask") {
+      config.ask = [...(config.ask || []), rule];
+    } else {
+      config.deny = [...(config.deny || []), rule];
+    }
+
+    this.toolAuthorizer.setConfig(config);
+
+    await this.messenger.send(this.convo, {
+      type: "text",
+      text: `✅ Added ${level} rule: ${this.fmt.code(rule)}\n\nChanges take effect immediately for new tool calls.`,
+    });
+  }
+
+  private async setPermissionMode(mode: PermissionMode): Promise<void> {
+    const config = this.toolAuthorizer.getConfig();
+    config.defaultMode = mode;
+    this.toolAuthorizer.setConfig(config);
+
+    const descriptions: Record<PermissionMode, string> = {
+      default: "Prompt for permission on first use of dangerous tools",
+      acceptEdits: "Auto-accept file edits, ask for other dangerous tools",
+      dontAsk: "Auto-deny unless pre-approved via rules",
+      bypassPermissions: "Skip all permission prompts (use with caution!)",
+    };
+
+    await this.messenger.send(this.convo, {
+      type: "text",
+      text: [
+        `✅ Permission mode set to ${this.fmt.bold(mode)}`,
+        "",
+        descriptions[mode],
+      ].join("\n"),
+    });
+  }
+
+  private async clearPermissionRules(): Promise<void> {
+    this.toolAuthorizer.setConfig({ defaultMode: this.toolAuthorizer.getConfig().defaultMode });
+
+    await this.messenger.send(this.convo, {
+      type: "text",
+      text: "✅ All custom permission rules cleared.",
+    });
+  }
+
+  private permissionsUI(): UIElement {
+    const config = this.toolAuthorizer.getConfig();
+    const modes: PermissionMode[] = ["default", "acceptEdits", "dontAsk", "bypassPermissions"];
+    const currentMode = config.defaultMode || "default";
+
+    const rows: UIButton[][] = [];
+
+    // Mode selection buttons
+    const modeRow: UIButton[] = [];
+    for (let i = 0; i < Math.min(2, modes.length); i++) {
+      const mode = modes[i];
+      const isCurrent = mode === currentMode;
+      modeRow.push({
+        label: isCurrent ? `✅ ${mode}` : mode,
+        actionId: "perm",
+        data: `mode:${mode}`,
+      });
+    }
+    rows.push(modeRow);
+
+    const modeRow2: UIButton[] = [];
+    for (let i = 2; i < modes.length; i++) {
+      const mode = modes[i];
+      const isCurrent = mode === currentMode;
+      modeRow2.push({
+        label: isCurrent ? `✅ ${mode}` : mode,
+        actionId: "perm",
+        data: `mode:${mode}`,
+      });
+    }
+    if (modeRow2.length > 0) {
+      rows.push(modeRow2);
+    }
+
+    rows.push([{ label: "❌ Close", actionId: "perm", data: "close" }]);
+
+    return { kind: "buttons", rows };
+  }
+
+  private async handlePermissionsCallback(ackHandle: unknown, parts: string[]): Promise<void> {
+    const action = parts[0];
+
+    switch (action) {
+      case "mode": {
+        const mode = parts[1] as PermissionMode;
+        await this.messenger.ackAction?.(ackHandle, `Setting mode to ${mode}...`);
+        await this.setPermissionMode(mode);
+        break;
+      }
+      case "close":
+        await this.messenger.ackAction?.(ackHandle, "Closed.");
+        break;
+      default:
+        await this.messenger.ackAction?.(ackHandle, "Unknown action.");
+    }
+  }
+
   // ── Agent session management ────────────────────────────────────────
 
   private async showAgentSessions(offset = 0): Promise<void> {
@@ -834,6 +1062,7 @@ export class ChatController {
       this.convo.threadId ? `Topic: ${this.fmt.code(this.convo.threadId)}` : "",
       `Model: ${this.fmt.bold(this.activeModel.label)} (${this.fmt.code(`${this.activeModel.provider}/${this.activeModel.id}`)})`,
       `Thinking: ${this.fmt.code(this.activeThinkingLevel)}`,
+      `Permissions: ${this.fmt.code(this.toolAuthorizer.getConfig().defaultMode || "default")}`,
       `tmux sessions: ${tmuxSessions.length}`,
       `Selected: ${this.tmuxHandler.selectedSession ? this.fmt.bold(this.tmuxHandler.selectedSession) : this.fmt.italic("none")}`,
       `CWD: ${this.fmt.code(this.config.cwd)}`,
@@ -856,6 +1085,7 @@ export class ChatController {
       "/abort — Abort current operation",
       "/model — Select model",
       "/thinking — Set thinking level",
+      "/permissions — Configure tool permissions",
       "/status — Show status",
       "",
       this.fmt.bold("tmux Terminal"),
@@ -876,6 +1106,12 @@ export class ChatController {
       "/adduser <id> — Allow a user",
       "/removeuser <id> — Remove a user",
       "/users — List allowed users",
+      "",
+      this.fmt.bold("Permissions & Authorization"),
+      "• Use /permissions to configure tool permissions",
+      "• Rules: allow/ask/deny with pattern matching",
+      "• Example: /permissions allow bash(npm run *)",
+      "• Example: /permissions deny read(~/.env)",
       "",
       this.fmt.bold("Tips"),
       "• Use /tmux in a topic for a dedicated terminal",

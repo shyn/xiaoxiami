@@ -1,6 +1,7 @@
 import type { StreamSink } from "../../im/stream-sink.js";
 import type { ConversationRef } from "../../im/types.js";
 import type { Messenger } from "../../im/messenger.js";
+import { escapeHtml } from "../../telegram/format.js";
 
 const EDIT_THROTTLE_MS = 400;
 const MAX_DRAFT_LEN = 4000;
@@ -48,12 +49,12 @@ export class TelegramStreamSink implements StreamSink {
 
     if (error && this._buffer.length === 0) {
       this.draftId = 0;
-      await this.messenger.send(this.convo, { type: "text", text: `⚠️ <b>Model error:</b> ${error}` });
+      await this.messenger.send(this.convo, { type: "text", text: `⚠️ <b>Model error:</b> ${escapeHtml(error)}` });
       return null;
     }
 
     if (this._buffer) {
-      const finalText = this._buffer;
+      const finalText = escapeHtml(this._buffer);
       if (this.draftId) {
         const maxChars = this.messenger.capabilities.maxTextChars;
         if (finalText.length > maxChars) {
@@ -100,7 +101,8 @@ export class TelegramStreamSink implements StreamSink {
 
     if (this.draftId && this.messenger.sendDraft) {
       try {
-        const draftText = text.length > MAX_DRAFT_LEN ? "…" + text.slice(-MAX_DRAFT_LEN) : text;
+        const escaped = escapeHtml(text);
+        const draftText = escaped.length > MAX_DRAFT_LEN ? "…" + escaped.slice(-MAX_DRAFT_LEN) : escaped;
         await this.messenger.sendDraft(this.convo, this.draftId, draftText);
       } catch {
         this.draftId = 0;
@@ -113,7 +115,7 @@ export class TelegramStreamSink implements StreamSink {
   }
 
   private async flushStreamEdit(): Promise<void> {
-    const text = this._buffer;
+    const text = escapeHtml(this._buffer);
     if (!text) return;
 
     const maxChars = this.messenger.capabilities.maxTextChars;

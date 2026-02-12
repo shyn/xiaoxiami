@@ -175,6 +175,7 @@ export async function startTelegramPolling(opts: TelegramTransportOptions): Prom
     { command: "abort", description: "Abort current agent operation" },
     { command: "model", description: "Select model" },
     { command: "thinking", description: "Set thinking level" },
+    { command: "permissions", description: "Configure tool permissions" },
     { command: "tmux", description: "List tmux sessions" },
     { command: "new", description: "Create a new tmux session" },
     { command: "select", description: "Select a tmux session" },

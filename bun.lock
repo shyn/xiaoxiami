@@ -8,6 +8,7 @@
         "@mariozechner/pi-ai": "*",
         "@mariozechner/pi-coding-agent": "*",
         "@sinclair/typebox": "^0.34.0",
+        "minimatch": "^10.0.1",
       },
     },
   },

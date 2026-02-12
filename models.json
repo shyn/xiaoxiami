@@ -1,13 +1,16 @@
 {
-  "defaultModel": "sonnet4-proxy",
+  "defaultModel": "ark-code-latest",
   "models": [
     {
       "key": "ark-code-latest",
       "label": "Claude Sonnet 4",
       "provider": "anthropic",
+      "apiFormat": "anthropic-messages",
+      "apiKey": "96a0b453-2936-487d-83c7-5c51fa4bbbf3",
       "id": "ark-code-latest",
-      "baseUrl": "https://ark.cn-beijing.volces.com/api/coding",
-      "thinkingLevel": "medium"
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/coding/",
+      "maxTokens": 32768,
+      "thinkingLevel": "high"
     },
     {
       "key": "sonnet4-proxy",
