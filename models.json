@@ -2,10 +2,11 @@
   "defaultModel": "sonnet4-proxy",
   "models": [
     {
-      "key": "sonnet4",
+      "key": "ark-code-latest",
       "label": "Claude Sonnet 4",
       "provider": "anthropic",
-      "id": "claude-sonnet-4-20250514",
+      "id": "ark-code-latest",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/coding",
       "thinkingLevel": "medium"
     },
     {
