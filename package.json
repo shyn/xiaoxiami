@@ -1,0 +1,21 @@
+{
+  "name": "telegram-agent",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch run src/index.ts",
+    "build": "bun build src/index.ts --outdir ./dist --target bun",
+    "start:telegram": "bun run src/main-telegram.ts",
+    "dev:telegram": "bun --watch run src/main-telegram.ts",
+    "build:telegram": "bun build src/main-telegram.ts --outdir ./dist --target bun",
+    "start:wxwork": "bun run src/main-wxwork.ts",
+    "dev:wxwork": "bun --watch run src/main-wxwork.ts",
+    "build:wxwork": "bun build src/main-wxwork.ts --outdir ./dist --target bun"
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-ai": "*",
+    "@sinclair/typebox": "^0.34.0"
+  }
+}

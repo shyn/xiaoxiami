@@ -1,0 +1,50 @@
+{
+  "defaultModel": "sonnet4-proxy",
+  "models": [
+    {
+      "key": "sonnet4",
+      "label": "Claude Sonnet 4",
+      "provider": "anthropic",
+      "id": "claude-sonnet-4-20250514",
+      "thinkingLevel": "medium"
+    },
+    {
+      "key": "sonnet4-proxy",
+      "label": "Sonnet 4 (Proxy)",
+      "provider": "anthropic",
+      "id": "gemini-3-flash",
+      "baseUrl": "http://127.0.0.1:8045",
+      "apiFormat": "anthropic-messages",
+      "apiKey": "noway",
+      "thinkingLevel": "low"
+    },
+    {
+      "key": "gpt4o",
+      "label": "GPT-4o",
+      "provider": "openai",
+      "id": "gpt-4o",
+      "thinkingLevel": "off"
+    },
+    {
+      "key": "deepseek-r1",
+      "label": "DeepSeek R1",
+      "provider": "deepseek",
+      "id": "deepseek-reasoner",
+      "baseUrl": "https://api.deepseek.com/v1",
+      "apiFormat": "openai-completions",
+      "apiKey": "env:DEEPSEEK_API_KEY",
+      "thinkingLevel": "high"
+    },
+    {
+      "key": "local-llama",
+      "label": "Local LLaMA",
+      "provider": "local",
+      "id": "llama-3.1-70b",
+      "baseUrl": "http://localhost:8080/v1",
+      "apiFormat": "openai-completions",
+      "contextWindow": 128000,
+      "maxTokens": 4096,
+      "thinkingLevel": "off"
+    }
+  ]
+}

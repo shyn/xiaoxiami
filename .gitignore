@@ -1,0 +1,7 @@
+node_modules
+dist
+sessions
+auth.json
+telegram_offset.json
+logs
+.env
