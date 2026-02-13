@@ -16,6 +16,7 @@ export interface Config {
   presetOwnerId: number | null;
   messageStoreEnabled: boolean;
   messageStoreMaxAgeDays: number;
+  logLevel: string;
 }
 
 export async function loadConfig(): Promise<Config> {
@@ -35,6 +36,7 @@ export async function loadConfig(): Promise<Config> {
   const presetOwnerId = presetOwnerIdRaw ? Number(presetOwnerIdRaw) : null;
   const messageStoreEnabled = process.env.MESSAGE_STORE_ENABLED !== "false";
   const messageStoreMaxAgeDays = Number(process.env.MESSAGE_STORE_MAX_AGE_DAYS ?? "30");
+  const logLevel = process.env.LOG_LEVEL ?? "info";
 
   const modelRegistry = await loadModels(dataDir);
 
@@ -54,5 +56,6 @@ export async function loadConfig(): Promise<Config> {
     presetOwnerId,
     messageStoreEnabled,
     messageStoreMaxAgeDays,
+    logLevel,
   };
 }

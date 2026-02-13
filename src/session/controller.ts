@@ -17,6 +17,7 @@ import type { ModelConfig, ThinkingLevel } from "../models.js";
 import { StreamingManager } from "./controller/streaming.js";
 import { TmuxHandler } from "./controller/tmux-handler.js";
 import { parseCallbackData } from "../telegram/callback-parser.js";
+import { createLogger, type Logger } from "../logger.js";
 
 export class ChatController {
   private tg: TelegramClient;
@@ -24,6 +25,7 @@ export class ChatController {
   private chatId: number;
   private threadId: number | undefined;
   private managed: ManagedSession | null = null;
+  private logger: Logger;
 
   private streaming: StreamingManager;
   private tmuxHandler: TmuxHandler;
@@ -41,6 +43,11 @@ export class ChatController {
     this.config = config;
     this.chatId = chatId;
     this.threadId = threadId;
+    this.logger = createLogger({
+      component: "controller",
+      conversationId: String(chatId),
+      threadId,
+    });
 
     this.streaming = new StreamingManager(tg, chatId, config.telegramMaxChars, config.editThrottleMs);
     this.tmuxHandler = new TmuxHandler(tg, chatId, config.tmuxDefaultSocket, config.tmuxSocketDir, config.telegramMaxChars);
@@ -66,8 +73,7 @@ export class ChatController {
   // ── Initialization ─────────────────────────────────────────────────
 
   async init(autoResume = true): Promise<void> {
-    const chatLabel = this.threadId ? `chat=${this.chatId} thread=${this.threadId}` : `chat=${this.chatId}`;
-    console.log(`[${chatLabel}] Initializing agent (sessionDir=${this.sessionDir}, autoResume=${autoResume})`);
+    this.logger.info({ sessionDir: this.sessionDir, autoResume }, "Initializing agent");
 
     await tmux.ensureSocketDir(this.config.tmuxSocketDir);
     await mkdir(this.sessionDir, { recursive: true });
@@ -100,7 +106,7 @@ export class ChatController {
     });
 
     if (!autoResume) {
-      console.log(`[${chatLabel}] Agent initialized (fresh session, no auto-resume)`);
+      this.logger.info("Agent initialized (fresh session, no auto-resume)");
       return;
     }
 
@@ -110,15 +116,15 @@ export class ChatController {
         existing.sort((a, b) => b.modified.getTime() - a.modified.getTime());
         const latest = existing[0];
         const label = latest.name || latest.firstMessage?.slice(0, 40) || latest.id.slice(0, 8);
-        console.log(`[${chatLabel}] Found ${existing.length} existing session(s), resuming latest: ${label} (${latest.id.slice(0, 8)})`);
+        this.logger.info({ sessionCount: existing.length, latestSession: label, sessionId: latest.id.slice(0, 8) }, "Resuming latest session");
 
         await this.managed.switchSession(latest.path);
-        console.log(`[${chatLabel}] Session resumed successfully (${latest.messageCount} messages)`);
+        this.logger.info({ messageCount: latest.messageCount }, "Session resumed successfully");
       } else {
-        console.log(`[${chatLabel}] No existing sessions, starting fresh`);
+        this.logger.info("No existing sessions, starting fresh");
       }
     } catch (e) {
-      console.error(`[${chatLabel}] Failed to auto-resume session:`, e);
+      this.logger.error({ err: e }, "Failed to auto-resume session");
     }
   }
 
@@ -128,7 +134,7 @@ export class ChatController {
         await this.init();
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        console.error(`[chat=${this.chatId}] Failed to initialize agent:`, e);
+        this.logger.error({ err: e }, "Failed to initialize agent");
         await this.tg.sendMessage(this.chatId, `❌ Agent initialization failed: ${escapeHtml(msg)}`, { parse_mode: "HTML" });
         throw e;
       }
@@ -169,7 +175,7 @@ export class ChatController {
       return;
     }
 
-    console.log(`[chat=${this.chatId}] Prompting agent with ${text.length} chars`);
+    this.logger.info({ charCount: text.length }, "Prompting agent");
     await this.tg.sendChatAction(this.chatId, "typing");
     await this.managed!.prompt(text);
   }
@@ -197,7 +203,7 @@ export class ChatController {
 
       const prompt = caption || "What do you see in this image?";
 
-      console.log(`[chat=${this.chatId}] Prompting agent with image (${data.length} bytes) + "${prompt.slice(0, 50)}"`);
+      this.logger.info({ imageBytes: data.length, promptPreview: prompt.slice(0, 50) }, "Prompting agent with image");
       await this.tg.sendChatAction(this.chatId, "typing");
 
       await this.managed!.prompt(prompt, {
@@ -208,7 +214,7 @@ export class ChatController {
       });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.error(`[chat=${this.chatId}] Photo handling error:`, e);
+      this.logger.error({ err: e }, "Photo handling error");
       await this.tg.sendMessage(this.chatId, `❌ Failed to process image: ${escapeHtml(msg)}`, { parse_mode: "HTML" });
     }
   }
@@ -453,13 +459,13 @@ export class ChatController {
   }
 
   private handleAgentStart(): void {
-    console.log(`[chat=${this.chatId}] Agent started`);
+    this.logger.info("Agent started");
     this.isAgentRunning = true;
     this.streaming.startNewStream();
   }
 
   private async handleAgentEnd(errorMessage?: string): Promise<void> {
-    console.log(`[chat=${this.chatId}] Agent ended (buffer=${this.streaming.streamBuffer.length} chars${errorMessage ? `, error=${errorMessage}` : ""})`);
+    this.logger.info({ bufferChars: this.streaming.streamBuffer.length, errorMessage }, "Agent ended");
     this.isAgentRunning = false;
 
     await this.streaming.finalizeStream(errorMessage);
@@ -472,7 +478,7 @@ export class ChatController {
   }
 
   private handleError(err: string): void {
-    console.error(`[chat=${this.chatId}] Agent error: ${err}`);
+    this.logger.error({ error: err }, "Agent error");
     this.isAgentRunning = false;
     this.tg.sendMessage(this.chatId, `⚠️ <b>Agent error:</b> ${escapeHtml(err)}`, {
       parse_mode: "HTML",
@@ -480,7 +486,7 @@ export class ChatController {
   }
 
   private handleModelFallback(fromLabel: string, toLabel: string, error: string): void {
-    console.log(`[chat=${this.chatId}] Model fallback: ${fromLabel} -> ${toLabel}`);
+    this.logger.info({ from: fromLabel, to: toLabel }, "Model fallback");
     const truncatedError = error.length > 150 ? error.slice(0, 150) + "…" : error;
     this.tg.sendMessage(
       this.chatId,

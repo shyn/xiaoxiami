@@ -23,6 +23,7 @@ import type { ConversationRef } from "../im/types.js";
 import { minimatch } from "minimatch";
 import { resolve, isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
+import { createLogger, type Logger } from "../logger.js";
 
 export type PermissionLevel = "allow" | "ask" | "deny";
 export type PermissionMode = "default" | "acceptEdits" | "dontAsk" | "bypassPermissions";
@@ -181,6 +182,7 @@ function matchesDomainPattern(url: string, pattern: string): boolean {
 export class PermissionEvaluator {
   private rules: PermissionRule[] = [];
   private options: PermissionEvaluatorOptions;
+  private logger: Logger;
 
   constructor(options: Partial<PermissionEvaluatorOptions> = {}) {
     this.options = {
@@ -188,6 +190,7 @@ export class PermissionEvaluator {
       cwd: options.cwd ?? process.cwd(),
       timeoutMs: options.timeoutMs ?? 5 * 60 * 1000,
     };
+    this.logger = createLogger({ component: "permissions" });
     this.loadRules();
   }
 
@@ -232,30 +235,29 @@ export class PermissionEvaluator {
     const normalizedTool = toolName.toLowerCase();
     const mode = this.options.config.defaultMode ?? "default";
 
-    console.log(`[permissions] Evaluating ${toolName} with mode=${mode}, args=${JSON.stringify(args)}`);
-    console.log(`[permissions] Loaded ${this.rules.length} rules:`, this.rules.map(r => `${r.level}:${r.tool}${r.specifier ? `(${r.specifier})` : ""}`).join(", ") || "none");
+    this.logger.debug({ toolName, mode, args, ruleCount: this.rules.length, rules: this.rules.map(r => `${r.level}:${r.tool}${r.specifier ? `(${r.specifier})` : ""}`) }, "Evaluating permission");
 
     // Check rules in order (deny -> ask -> allow)
     for (const rule of this.rules) {
       // Tool name must match
       if (rule.tool !== normalizedTool && rule.tool !== "*") {
-        console.log(`[permissions] Rule ${rule.level}:${rule.tool} does not match tool ${normalizedTool}`);
+        this.logger.trace({ rule: `${rule.level}:${rule.tool}`, tool: normalizedTool }, "Rule does not match tool");
         continue;
       }
 
-      console.log(`[permissions] Tool ${normalizedTool} matches rule ${rule.level}:${rule.tool}`);
+      this.logger.trace({ tool: normalizedTool, rule: `${rule.level}:${rule.tool}` }, "Tool matches rule");
 
       // If no specifier, rule matches all uses
       if (!rule.specifier) {
-        console.log(`[permissions] Rule has no specifier, returning ${rule.level}`);
+        this.logger.debug({ tool: normalizedTool, level: rule.level }, "Rule has no specifier, returning level");
         return rule.level;
       }
 
       // Check specifier based on tool type
       const specifierMatches = this.matchesSpecifier(normalizedTool, args, rule.specifier);
-      console.log(`[permissions] Checking specifier "${rule.specifier}" for ${normalizedTool}: ${specifierMatches}`);
+      this.logger.trace({ tool: normalizedTool, specifier: rule.specifier, matches: specifierMatches }, "Checking specifier");
       if (specifierMatches) {
-        console.log(`[permissions] Specifier matches, returning ${rule.level}`);
+        this.logger.debug({ tool: normalizedTool, level: rule.level, specifier: rule.specifier }, "Specifier matches, returning level");
         return rule.level;
       }
     }
@@ -263,20 +265,20 @@ export class PermissionEvaluator {
     // Default behavior based on mode
     switch (mode) {
       case "bypassPermissions":
-        console.log(`[permissions] Mode is bypassPermissions, returning allow`);
+        this.logger.trace({ mode }, "Mode is bypassPermissions, returning allow");
         return "allow";
       case "dontAsk":
-        console.log(`[permissions] Mode is dontAsk, returning deny`);
+        this.logger.trace({ mode }, "Mode is dontAsk, returning deny");
         return "deny";
       case "acceptEdits":
         // Auto-allow edit tools, ask for others
         const result = ["write", "edit"].includes(normalizedTool) ? "allow" : "ask";
-        console.log(`[permissions] Mode is acceptEdits, ${normalizedTool} is ${result === "allow" ? "edit tool, allow" : "not edit tool, ask"}`);
+        this.logger.trace({ mode, tool: normalizedTool, result }, "Mode is acceptEdits");
         return result;
       default:
         // Default: ask for potentially dangerous tools
         const isDangerous = this.isPotentiallyDangerous(normalizedTool, args);
-        console.log(`[permissions] Mode is default, ${normalizedTool} is ${isDangerous ? "dangerous, ask" : "safe, allow"}`);
+        this.logger.trace({ mode, tool: normalizedTool, isDangerous }, "Mode is default");
         return isDangerous ? "ask" : "allow";
     }
   }
@@ -420,6 +422,7 @@ export class ToolAuthorizer {
   private evaluator: PermissionEvaluator;
   private pending = new Map<string, PendingAuthorization>();
   private timeoutMs: number;
+  private logger: Logger;
 
   constructor(
     messenger: Messenger,
@@ -435,6 +438,7 @@ export class ToolAuthorizer {
     this.fmt = fmt;
     this.convo = convo;
     this.timeoutMs = options.timeoutMs ?? 5 * 60 * 1000;
+    this.logger = createLogger({ component: "tool-authorizer" });
     this.evaluator = new PermissionEvaluator({
       config: options.config ?? {},
       cwd: options.cwd,
@@ -468,36 +472,36 @@ export class ToolAuthorizer {
    */
   wrapTools(tools: ToolDefinition[]): ToolDefinition[] {
     const mode = this.evaluator.getConfig().defaultMode;
-    console.log(`[permissions] wrapTools called with mode=${mode}, tools=${tools.map(t => t.name).join(",")}`);
+    this.logger.debug({ mode, tools: tools.map(t => t.name) }, "wrapTools called");
 
     // In bypass mode, don't wrap
     if (mode === "bypassPermissions") {
-      console.log(`[permissions] bypassPermissions mode - tools NOT wrapped`);
+      this.logger.debug("bypassPermissions mode - tools NOT wrapped");
       return tools;
     }
 
-    console.log(`[permissions] Wrapping ${tools.length} tools with authorization`);
+    this.logger.debug({ toolCount: tools.length }, "Wrapping tools with authorization");
 
     return tools.map((tool) => {
       return {
         ...tool,
         execute: async (id: string, params: any) => {
-          console.log(`[permissions] Tool ${tool.name} executing with id=${id}`);
+          this.logger.trace({ toolName: tool.name, id }, "Tool executing");
           const permission = this.evaluator.evaluate(tool.name, params);
-          console.log(`[permissions] Tool ${tool.name} evaluated to: ${permission}`);
+          this.logger.debug({ toolName: tool.name, permission }, "Tool evaluated");
 
           switch (permission) {
             case "allow":
-              console.log(`[permissions] Tool ${tool.name} allowed - executing directly`);
+              this.logger.trace({ toolName: tool.name }, "Tool allowed - executing directly");
               return tool.execute(id, params);
             case "deny":
-              console.log(`[permissions] Tool ${tool.name} denied - throwing error`);
+              this.logger.debug({ toolName: tool.name }, "Tool denied - throwing error");
               throw new Error(
                 `Permission denied: ${tool.name} is blocked by permission rules`,
               );
             case "ask":
             default:
-              console.log(`[permissions] Tool ${tool.name} requires authorization - sending request`);
+              this.logger.debug({ toolName: tool.name }, "Tool requires authorization - sending request");
               return this.authorizeAndExecute(tool.name, params, () =>
                 tool.execute(id, params),
               );
@@ -516,12 +520,12 @@ export class ToolAuthorizer {
     executeFn: () => Promise<any>,
   ): Promise<any> {
     const authId = `${toolName}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    console.log(`[permissions] authorizeAndExecute created authId=${authId} for ${toolName}`);
+    this.logger.debug({ authId, toolName }, "authorizeAndExecute created");
 
     return new Promise((resolve, reject) => {
       // Set timeout for authorization
       const timeoutId = setTimeout(() => {
-        console.log(`[permissions] Authorization timeout for ${toolName} (authId=${authId})`);
+        this.logger.warn({ authId, toolName }, "Authorization timeout");
         this.cleanupAuthorization(authId);
         reject(
           new Error(
@@ -562,7 +566,7 @@ export class ToolAuthorizer {
     toolName: string,
     args: any,
   ): Promise<void> {
-    console.log(`[permissions] Sending authorization request for ${toolName} (authId=${authId})`);
+    this.logger.debug({ authId, toolName }, "Sending authorization request");
 
     const toolDisplay = this.formatToolDisplay(toolName, args);
 
@@ -584,9 +588,6 @@ export class ToolAuthorizer {
       ],
     };
 
-    console.log(`[permissions] Messenger sending with UI:`, JSON.stringify(ui));
-    console.log(`[permissions] Message text:`, text);
-
     let result;
     try {
       result = await this.messenger.send(this.convo, {
@@ -594,9 +595,9 @@ export class ToolAuthorizer {
         text,
         ui,
       });
-      console.log(`[permissions] Authorization message sent, result:`, result);
+      this.logger.debug({ result }, "Authorization message sent");
     } catch (err) {
-      console.error(`[permissions] Failed to send authorization message:`, err);
+      this.logger.error({ err }, "Failed to send authorization message");
       throw err;
     }
 
@@ -687,29 +688,28 @@ export class ToolAuthorizer {
     action: "allow" | "deny",
     authId: string,
   ): Promise<void> {
-    console.log(`[permissions] handleCallback called with action=${action}, authId=${authId}`);
-    console.log(`[permissions] Pending authorizations:`, Array.from(this.pending.keys()));
+    this.logger.debug({ action, authId, pendingKeys: Array.from(this.pending.keys()) }, "handleCallback called");
 
     const pending = this.pending.get(authId);
 
     if (!pending) {
-      console.log(`[permissions] No pending authorization found for authId=${authId}`);
+      this.logger.warn({ authId }, "No pending authorization found");
       await this.messenger.ackAction?.(ackHandle, "Request expired or already handled.");
       return;
     }
 
-    console.log(`[permissions] Found pending authorization for ${pending.toolName}`);
+    this.logger.debug({ authId, toolName: pending.toolName }, "Found pending authorization");
 
     // Clear timeout
     clearTimeout(pending.timeoutId);
 
     // Resolve the pending promise
     if (action === "allow") {
-      console.log(`[permissions] Resolving with approval for ${pending.toolName}`);
+      this.logger.debug({ toolName: pending.toolName }, "Resolving with approval");
       pending.resolve(true);
       await this.messenger.ackAction?.(ackHandle, "Action approved.");
     } else {
-      console.log(`[permissions] Rejecting with denial for ${pending.toolName}`);
+      this.logger.debug({ toolName: pending.toolName }, "Rejecting with denial");
       pending.reject(new Error(`Tool execution denied: ${pending.toolName}`));
       await this.messenger.ackAction?.(ackHandle, "Action denied.");
     }

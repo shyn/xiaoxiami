@@ -9,6 +9,7 @@ import { TelegramMessageStore } from "./telegram/store.js";
 import { startTelegramPolling } from "./platforms/telegram/transport.js";
 import { Router } from "./bot/router.js";
 import type { ConversationRef } from "./im/types.js";
+import { rootLogger } from "./logger.js";
 
 async function main(): Promise<void> {
   const config = await loadConfig();
@@ -30,18 +31,22 @@ async function main(): Promise<void> {
 
   if (config.presetOwnerId && !auth.isPaired()) {
     auth.pair(config.presetOwnerId);
-    console.log(`Owner pre-configured via OWNER_ID: ${config.presetOwnerId}`);
+    rootLogger.info({ ownerId: config.presetOwnerId }, "Owner pre-configured via OWNER_ID");
   }
 
   const modelCount = config.modelRegistry.list().length;
   const defaultModel = config.modelRegistry.getDefault();
 
-  console.log(`🤖 Pi Agent Telegram Bot started`);
-  console.log(`   Auth file: ${config.authFile}`);
-  console.log(`   Paired: ${auth.isPaired() ? `yes (owner: ${auth.getData().ownerId})` : "no — waiting for /start"}`);
-  console.log(`   Agent CWD: ${config.cwd}`);
-  console.log(`   Models: ${modelCount} configured, default: ${defaultModel.key} (${defaultModel.provider}/${defaultModel.id})`);
-  console.log(`   tmux socket: ${config.tmuxDefaultSocket}`);
+  rootLogger.info("🤖 Pi Agent Telegram Bot started");
+  rootLogger.info({
+    authFile: config.authFile,
+    paired: auth.isPaired(),
+    ownerId: auth.getData().ownerId,
+    agentCwd: config.cwd,
+    modelCount,
+    defaultModel: { key: defaultModel.key, provider: defaultModel.provider, id: defaultModel.id },
+    tmuxSocket: config.tmuxDefaultSocket,
+  }, "Bot configuration");
 
   setInterval(router.cleanupStaleControllers, router.cleanupIntervalMs);
 
@@ -52,7 +57,7 @@ async function main(): Promise<void> {
     onRawUpdate: (update, chatId, threadId) => {
       if (chatId != null) {
         messageStore.append(chatId, threadId, update).catch((e) =>
-          console.error("Failed to persist update:", e),
+          rootLogger.error({ err: e }, "Failed to persist update"),
         );
       }
     },
@@ -60,6 +65,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
-  console.error("Fatal error:", e);
+  rootLogger.fatal({ err: e }, "Fatal error");
   process.exit(1);
 });

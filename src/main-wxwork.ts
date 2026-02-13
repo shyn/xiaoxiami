@@ -28,6 +28,7 @@ import { startWxWorkWebhook } from "./platforms/wxwork/transport.js";
 import { Router } from "./bot/router.js";
 import type { Config } from "./config.js";
 import type { ConversationRef } from "./im/types.js";
+import { rootLogger } from "./logger.js";
 
 async function main(): Promise<void> {
   const corpId = process.env.WXWORK_CORP_ID;
@@ -90,19 +91,23 @@ async function main(): Promise<void> {
 
   if (presetOwnerId && !auth.isPaired()) {
     auth.pair(presetOwnerId);
-    console.log(`Owner pre-configured via OWNER_ID: ${presetOwnerId}`);
+    rootLogger.info({ ownerId: presetOwnerId }, "Owner pre-configured via OWNER_ID");
   }
 
   const modelCount = modelRegistry.list().length;
   const defaultModel = modelRegistry.getDefault();
 
-  console.log(`🤖 Pi Agent WxWork Bot started`);
-  console.log(`   Auth file: ${authFile}`);
-  console.log(`   Paired: ${auth.isPaired() ? `yes (owner: ${auth.getData().ownerId})` : "no — waiting for /start"}`);
-  console.log(`   Agent CWD: ${cwd}`);
-  console.log(`   Models: ${modelCount} configured, default: ${defaultModel.key} (${defaultModel.provider}/${defaultModel.id})`);
-  console.log(`   tmux socket: ${config.tmuxDefaultSocket}`);
-  console.log(`   Webhook port: ${port}`);
+  rootLogger.info("🤖 Pi Agent WxWork Bot started");
+  rootLogger.info({
+    authFile,
+    paired: auth.isPaired(),
+    ownerId: auth.getData().ownerId,
+    agentCwd: cwd,
+    modelCount,
+    defaultModel: { key: defaultModel.key, provider: defaultModel.provider, id: defaultModel.id },
+    tmuxSocket: config.tmuxDefaultSocket,
+    webhookPort: port,
+  }, "Bot configuration");
 
   setInterval(router.cleanupStaleControllers, router.cleanupIntervalMs);
 
@@ -116,6 +121,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
-  console.error("Fatal error:", e);
+  rootLogger.fatal({ err: e }, "Fatal error");
   process.exit(1);
 });

@@ -18,6 +18,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { Config } from "../config.js";
 import { ModelStore, type ThinkingLevel } from "../models.js";
+import { rootLogger, type Logger } from "../logger.js";
 
 export interface AgentEventCallbacks {
   onTextDelta: (delta: string) => void;
@@ -58,10 +59,16 @@ export interface CreateSessionOptions {
    * Used for authorization/security layers.
    */
   wrapTools?: (tools: ToolDefinition[]) => ToolDefinition[];
+  /**
+   * Optional logger instance for structured logging.
+   */
+  logger?: Logger;
 }
 
 export async function createManagedSession(opts: CreateSessionOptions): Promise<ManagedSession> {
-  const { config, tmuxTools, callbacks, sessionDir, modelKey, thinkingLevel, wrapTools } = opts;
+  const { config, tmuxTools, callbacks, sessionDir, modelKey, thinkingLevel, wrapTools, logger: customLogger } = opts;
+
+  const logger = customLogger ?? rootLogger.child({ component: "session" });
 
   const authStorage = new AuthStorage();
   const modelStore = new ModelStore(config.modelRegistry, authStorage);
@@ -73,14 +80,14 @@ export async function createManagedSession(opts: CreateSessionOptions): Promise<
   let activeModelKey = modelKey;
   let activeThinkingLevel = thinkingLevel;
 
-  console.log(`Using model: ${sdkModel.provider}/${sdkModel.id}${sdkModel.baseUrl ? ` @ ${sdkModel.baseUrl}` : ""}`);
-  console.log(`Thinking level: ${thinkingLevel}`);
+  logger.info({ model: `${sdkModel.provider}/${sdkModel.id}`, baseUrl: sdkModel.baseUrl }, "Using model");
+  logger.info({ thinkingLevel }, "Thinking level set");
 
   const skillPaths = [
     resolve(config.cwd, ".agents", "skills"),
     resolve(homedir(), ".agents", "skills"),
   ];
-  console.log(`Skill paths: ${skillPaths.join(", ")}`);
+  logger.debug({ skillPaths }, "Skill paths configured");
 
   const resourceLoader = new DefaultResourceLoader({
     cwd: config.cwd,
@@ -109,10 +116,10 @@ export async function createManagedSession(opts: CreateSessionOptions): Promise<
         const originalTools = agent.state.tools;
         const wrappedTools = wrapTools(originalTools);
         agent.setTools(wrappedTools);
-        console.log(`[agent] Tools wrapped with authorization layer (${originalTools.length} tools)`);
+        logger.info({ toolCount: originalTools.length }, "Tools wrapped with authorization layer");
       }
     } catch (e) {
-      console.error("[agent] Failed to wrap tools:", e);
+      logger.error({ err: e }, "Failed to wrap tools");
     }
   }
   applyToolWrapping();
@@ -152,9 +159,9 @@ export async function createManagedSession(opts: CreateSessionOptions): Promise<
           }
         }
         if (errorMessage) {
-          console.error(`[agent] agent_end with error: ${errorMessage}`);
+          logger.error({ errorMessage }, "Agent ended with error");
         } else {
-          console.log(`[agent] agent_end, messages=${msgs?.length ?? "?"}`);
+          logger.info({ messageCount: msgs?.length }, "Agent ended");
         }
         callbacks.onAgentEnd(errorMessage);
         break;
@@ -166,23 +173,19 @@ export async function createManagedSession(opts: CreateSessionOptions): Promise<
         const contentTypes = Array.isArray(m?.content)
           ? m.content.map((c: any) => c.type ?? "unknown").join(",")
           : typeof m?.content;
-        const extra = m?.stopReason ? ` stopReason=${m.stopReason}` : "";
-        const errMsg = m?.errorMessage ? ` error="${String(m.errorMessage).slice(0, 200)}"` : "";
-        console.log(`[agent] message_start: role=${role} contentTypes=[${contentTypes}]${extra}${errMsg}`);
+        logger.debug({ role, contentTypes, stopReason: m?.stopReason, errorMessage: m?.errorMessage }, "Message start");
         break;
       }
 
       case "message_end": {
         const m = (event as any).message;
         const role = m?.role ?? "?";
-        const extra = m?.stopReason ? ` stopReason=${m.stopReason}` : "";
-        const errMsg = m?.errorMessage ? ` error="${String(m.errorMessage).slice(0, 300)}"` : "";
-        console.log(`[agent] message_end: role=${role}${extra}${errMsg}`);
+        logger.debug({ role, stopReason: m?.stopReason, errorMessage: m?.errorMessage }, "Message end");
         break;
       }
 
       default:
-        console.log(`[agent] event: ${event.type}`);
+        logger.debug({ eventType: event.type }, "Agent event");
         break;
     }
   });
@@ -192,7 +195,7 @@ export async function createManagedSession(opts: CreateSessionOptions): Promise<
     try {
       (session as any).agent.setModel(model);
     } catch (e) {
-      console.error(`[agent] Failed to reapply model:`, e);
+      logger.error({ err: e }, "Failed to reapply model");
     }
   }
 
@@ -204,7 +207,7 @@ export async function createManagedSession(opts: CreateSessionOptions): Promise<
     const toConfig = config.modelRegistry.get(defaultKey);
     if (!fromConfig || !toConfig) return false;
 
-    console.log(`[agent] Falling back from ${fromConfig.label} to default ${toConfig.label}`);
+    logger.info({ from: fromConfig.label, to: toConfig.label }, "Falling back to default model");
     activeModelKey = defaultKey;
     activeThinkingLevel = toConfig.thinkingLevel ?? config.defaultThinkingLevel;
 
@@ -213,7 +216,7 @@ export async function createManagedSession(opts: CreateSessionOptions): Promise<
       (session as any).agent.setModel(defaultModel);
       (session as any).agent.setThinkingLevel(activeThinkingLevel);
     } catch (e) {
-      console.error(`[agent] Failed to set fallback model:`, e);
+      logger.error({ err: e }, "Failed to set fallback model");
       return false;
     }
 
@@ -232,17 +235,23 @@ export async function createManagedSession(opts: CreateSessionOptions): Promise<
     async prompt(text: string, options?: { images?: Array<{ type: string; source: { type: string; media_type: string; data: string } }> }) {
       const model = session.model;
       const msgCount = session.messages?.length ?? 0;
-      console.log(`[agent] prompt() called, sessionId=${session.sessionId?.slice(0, 8)}, model=${model?.provider}/${model?.id}, messages=${msgCount}, thinkingLevel=${session.thinkingLevel}${options?.images ? `, images=${options.images.length}` : ""}`);
+      logger.info({
+        sessionId: session.sessionId?.slice(0, 8),
+        model: `${model?.provider}/${model?.id}`,
+        messageCount: msgCount,
+        thinkingLevel: session.thinkingLevel,
+        imageCount: options?.images?.length ?? 0,
+      }, "Prompting agent");
       try {
         await session.prompt(text, options?.images ? { images: options.images } : undefined);
-        console.log(`[agent] prompt() completed`);
+        logger.info("Prompt completed");
       } catch (e: unknown) {
         const errMsg = e instanceof Error ? e.message : String(e);
         const isRecoverable = /403|401|429|5\d\d|timeout|ECONNREFUSED|ENOTFOUND|fetch failed/i.test(errMsg);
         if (isRecoverable && tryFallbackToDefault(errMsg)) {
           return;
         }
-        console.error(`[agent] prompt() error:`, e);
+        logger.error({ err: e }, "Prompt error");
         callbacks.onError(errMsg);
       }
     },
@@ -270,13 +279,13 @@ export async function createManagedSession(opts: CreateSessionOptions): Promise<
         activeThinkingLevel = modelConfig.thinkingLevel;
         session.setThinkingLevel(activeThinkingLevel);
       }
-      console.log(`[agent] Model switched to ${model.provider}/${model.id}${model.baseUrl ? ` @ ${model.baseUrl}` : ""}`);
+      logger.info({ model: `${model.provider}/${model.id}`, baseUrl: model.baseUrl }, "Model switched");
     },
 
     setThinkingLevel(level: ThinkingLevel) {
       activeThinkingLevel = level;
       session.setThinkingLevel(level);
-      console.log(`[agent] Thinking level set to ${level}`);
+      logger.info({ thinkingLevel: level }, "Thinking level set");
     },
 
     async switchSession(sessionPath: string) {

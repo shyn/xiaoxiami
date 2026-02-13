@@ -18,6 +18,7 @@ import type { ModelConfig, ThinkingLevel } from "../models.js";
 import { TmuxHandler } from "./tmux-handler.js";
 import { ToolAuthorizer, type PermissionConfig, type PermissionMode } from "./permissions.js";
 import type { PermissionStore } from "../permissions-store.js";
+import { createLogger, type Logger } from "../logger.js";
 
 export class ChatController {
   private messenger: Messenger;
@@ -26,6 +27,7 @@ export class ChatController {
   private config: Config;
   private permissions: PermissionStore;
   private managed: ManagedSession | null = null;
+  private logger: Logger;
 
   private streamSink: StreamSink;
   private tmuxHandler: TmuxHandler;
@@ -52,19 +54,24 @@ export class ChatController {
     this.convo = convo;
     this.config = config;
     this.permissions = permissions;
+    this.logger = createLogger({
+      component: "controller",
+      conversationId: convo.conversationId,
+      threadId: convo.threadId,
+    });
 
     this.streamSink = createStreamSink(convo);
     this.tmuxHandler = new TmuxHandler(messenger, fmt, convo, config.tmuxDefaultSocket, config.tmuxSocketDir);
 
     // Load permission config from store
     const permissionConfig = this.permissions.getConfig(this.conversationKey);
-    console.log(`[controller] ChatController created for ${this.conversationKey}, permissionConfig:`, permissionConfig);
+    this.logger.debug({ permissionConfig }, "ChatController created");
     this.toolAuthorizer = new ToolAuthorizer(messenger, fmt, convo, {
       cwd: config.cwd,
       timeoutMs: 5 * 60 * 1000, // 5 minutes
       config: permissionConfig,
     });
-    console.log(`[controller] ToolAuthorizer initialized with mode=${permissionConfig.defaultMode || "default"}`);
+    this.logger.debug({ mode: permissionConfig.defaultMode || "default" }, "ToolAuthorizer initialized");
   }
 
   private get conversationKey(): string {
@@ -107,7 +114,7 @@ export class ChatController {
   // ── Initialization ─────────────────────────────────────────────────
 
   async init(autoResume = true): Promise<void> {
-    console.log(`[${this.chatLabel}] Initializing agent (sessionDir=${this.sessionDir}, autoResume=${autoResume})`);
+    this.logger.info({ sessionDir: this.sessionDir, autoResume }, "Initializing agent");
 
     await tmux.ensureSocketDir(this.config.tmuxSocketDir);
     await mkdir(this.sessionDir, { recursive: true });
@@ -141,7 +148,7 @@ export class ChatController {
     });
 
     if (!autoResume) {
-      console.log(`[${this.chatLabel}] Agent initialized (fresh session, no auto-resume)`);
+      this.logger.info("Agent initialized (fresh session, no auto-resume)");
       return;
     }
 
@@ -151,15 +158,15 @@ export class ChatController {
         existing.sort((a, b) => b.modified.getTime() - a.modified.getTime());
         const latest = existing[0];
         const label = latest.name || latest.firstMessage?.slice(0, 40) || latest.id.slice(0, 8);
-        console.log(`[${this.chatLabel}] Found ${existing.length} existing session(s), resuming latest: ${label} (${latest.id.slice(0, 8)})`);
+        this.logger.info({ sessionCount: existing.length, latestSession: label, sessionId: latest.id.slice(0, 8) }, "Resuming latest session");
 
         await this.managed.switchSession(latest.path);
-        console.log(`[${this.chatLabel}] Session resumed successfully (${latest.messageCount} messages)`);
+        this.logger.info({ messageCount: latest.messageCount }, "Session resumed successfully");
       } else {
-        console.log(`[${this.chatLabel}] No existing sessions, starting fresh`);
+        this.logger.info("No existing sessions, starting fresh");
       }
     } catch (e) {
-      console.error(`[${this.chatLabel}] Failed to auto-resume session:`, e);
+      this.logger.error({ err: e }, "Failed to auto-resume session");
     }
   }
 
@@ -169,7 +176,7 @@ export class ChatController {
         await this.init();
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        console.error(`[${this.chatLabel}] Failed to initialize agent:`, e);
+        this.logger.error({ err: e }, "Failed to initialize agent");
         await this.messenger.send(this.convo, {
           type: "text",
           text: `❌ Agent initialization failed: ${this.fmt.escape(msg)}`,
@@ -216,7 +223,7 @@ export class ChatController {
       return;
     }
 
-    console.log(`[${this.chatLabel}] Prompting agent with ${text.length} chars`);
+    this.logger.info({ charCount: text.length }, "Prompting agent");
     await this.messenger.sendTyping?.(this.convo);
     await this.managed!.prompt(text);
   }
@@ -236,7 +243,7 @@ export class ChatController {
       const base64 = Buffer.from(image.bytes).toString("base64");
       const prompt = caption || "What do you see in this image?";
 
-      console.log(`[${this.chatLabel}] Prompting agent with image (${image.bytes.length} bytes) + "${prompt.slice(0, 50)}"`);
+      this.logger.info({ imageBytes: image.bytes.length, promptPreview: prompt.slice(0, 50) }, "Prompting agent with image");
       await this.messenger.sendTyping?.(this.convo);
 
       await this.managed!.prompt(prompt, {
@@ -247,7 +254,7 @@ export class ChatController {
       });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.error(`[${this.chatLabel}] Photo handling error:`, e);
+      this.logger.error({ err: e }, "Photo handling error");
       await this.messenger.send(this.convo, {
         type: "text",
         text: `❌ Failed to process image: ${this.fmt.escape(msg)}`,
@@ -506,13 +513,13 @@ export class ChatController {
   }
 
   private handleAgentStart(): void {
-    console.log(`[${this.chatLabel}] Agent started`);
+    this.logger.info("Agent started");
     this.isAgentRunning = true;
     this.streamSink.start();
   }
 
   private async handleAgentEnd(errorMessage?: string): Promise<void> {
-    console.log(`[${this.chatLabel}] Agent ended (buffer=${this.streamSink.buffer.length} chars${errorMessage ? `, error=${errorMessage}` : ""})`);
+    this.logger.info({ bufferChars: this.streamSink.buffer.length, errorMessage }, "Agent ended");
     this.isAgentRunning = false;
 
     await this.streamSink.finalize(errorMessage);
@@ -525,7 +532,7 @@ export class ChatController {
   }
 
   private handleError(err: string): void {
-    console.error(`[${this.chatLabel}] Agent error: ${err}`);
+    this.logger.error({ error: err }, "Agent error");
     this.isAgentRunning = false;
     this.messenger.send(this.convo, {
       type: "text",
@@ -534,7 +541,7 @@ export class ChatController {
   }
 
   private handleModelFallback(fromLabel: string, toLabel: string, error: string): void {
-    console.log(`[${this.chatLabel}] Model fallback: ${fromLabel} -> ${toLabel}`);
+    this.logger.info({ from: fromLabel, to: toLabel }, "Model fallback");
     const truncatedError = error.length > 150 ? error.slice(0, 150) + "…" : error;
     this.messenger.send(this.convo, {
       type: "text",
@@ -695,9 +702,9 @@ export class ChatController {
 
   private async handleAuthCallback(ackHandle: unknown, parts: string[]): Promise<void> {
     const [action, authId] = parts;
-    console.log(`[controller] handleAuthCallback: action=${action}, authId=${authId}`);
+    this.logger.debug({ action, authId }, "handleAuthCallback");
     if (!authId || (action !== "allow" && action !== "deny")) {
-      console.log(`[controller] Invalid authorization request: parts=${JSON.stringify(parts)}`);
+      this.logger.warn({ parts }, "Invalid authorization request");
       await this.messenger.ackAction?.(ackHandle, "Invalid authorization request.");
       return;
     }

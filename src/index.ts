@@ -22,6 +22,7 @@ import { createTelegramClient, scopedClient, type TgUpdate } from "./telegram/cl
 import { escapeHtml } from "./telegram/format.js";
 import { ChatController } from "./session/controller.js";
 import { TelegramMessageStore } from "./telegram/store.js";
+import { rootLogger } from "./logger.js";
 
 let config: Awaited<ReturnType<typeof loadConfig>>;
 let auth: AuthStore;
@@ -56,7 +57,7 @@ function cleanupStaleControllers(): void {
     if (now - lastUsed > CONTROLLER_TTL_MS) {
       const ctrl = controllers.get(key);
       if (ctrl) {
-        console.log(`[cleanup] Disposing stale controller: ${key}`);
+        rootLogger.info({ controllerKey: key }, "Disposing stale controller");
         ctrl.dispose();
         controllers.delete(key);
       }
@@ -86,7 +87,7 @@ function saveOffset(dataDir: string, offset: number): void {
     writeFileSync(tmpPath, JSON.stringify({ offset }) + "\n", "utf-8");
     renameSync(tmpPath, filePath);
   } catch (e) {
-    console.error("Failed to save offset:", e);
+    rootLogger.error({ err: e }, "Failed to save offset");
   }
 }
 
@@ -94,7 +95,7 @@ function enqueueForController(chatId: number, threadId: number | undefined, fn: 
   const key = controllerKey(chatId, threadId);
   const prev = controllerQueues.get(key) ?? Promise.resolve();
   const next = prev.then(fn, fn).catch((e) => {
-    console.error(`[queue=${key}] Unhandled error in queued task:`, e);
+    rootLogger.error({ queueKey: key, err: e }, "Unhandled error in queued task");
   });
   controllerQueues.set(key, next);
 }
@@ -222,7 +223,7 @@ async function handleUpdate(update: TgUpdate): Promise<void> {
       : undefined);
   if (chatId) {
     messageStore.append(chatId, threadId, update).catch((e) =>
-      console.error("Failed to persist update:", e),
+      rootLogger.error({ err: e }, "Failed to persist update"),
     );
   }
 
@@ -323,9 +324,9 @@ async function handleUpdate(update: TgUpdate): Promise<void> {
 async function ensureNoWebhook(): Promise<void> {
   try {
     await tg.deleteWebhook();
-    console.log("Webhook cleared (safe startup).");
+    rootLogger.info("Webhook cleared (safe startup)");
   } catch (e: unknown) {
-    console.error("Failed to clear webhook:", e);
+    rootLogger.error({ err: e }, "Failed to clear webhook");
   }
 }
 
@@ -344,15 +345,19 @@ async function poll(): Promise<void> {
   const defaultModel = config.modelRegistry.getDefault();
   if (config.presetOwnerId && !auth.isPaired()) {
     auth.pair(config.presetOwnerId);
-    console.log(`Owner pre-configured via OWNER_ID: ${config.presetOwnerId}`);
+    rootLogger.info({ ownerId: config.presetOwnerId }, "Owner pre-configured via OWNER_ID");
   }
 
-  console.log(`🤖 Pi Agent Telegram Bot started`);
-  console.log(`   Auth file: ${config.authFile}`);
-  console.log(`   Paired: ${auth.isPaired() ? `yes (owner: ${auth.getData().ownerId})` : "no — waiting for /start"}`);
-  console.log(`   Agent CWD: ${config.cwd}`);
-  console.log(`   Models: ${modelCount} configured, default: ${defaultModel.key} (${defaultModel.provider}/${defaultModel.id})`);
-  console.log(`   tmux socket: ${config.tmuxDefaultSocket}`);
+  rootLogger.info("🤖 Pi Agent Telegram Bot started");
+  rootLogger.info({
+    authFile: config.authFile,
+    paired: auth.isPaired(),
+    ownerId: auth.getData().ownerId,
+    agentCwd: config.cwd,
+    modelCount,
+    defaultModel: { key: defaultModel.key, provider: defaultModel.provider, id: defaultModel.id },
+    tmuxSocket: config.tmuxDefaultSocket,
+  }, "Bot configuration");
 
   await ensureNoWebhook();
 
@@ -378,7 +383,7 @@ async function poll(): Promise<void> {
     { command: "removeuser", description: "Remove a user (owner)" },
   ]);
 
-  console.log(`   Polling for updates...`);
+  rootLogger.info("Polling for updates...");
 
   setInterval(cleanupStaleControllers, CONTROLLER_CLEANUP_INTERVAL_MS);
 
@@ -390,7 +395,7 @@ async function poll(): Promise<void> {
         try {
           await handleUpdate(update);
         } catch (e) {
-          console.error("Error handling update:", e);
+          rootLogger.error({ err: e }, "Error handling update");
         }
       }
       if (updates.length > 0 && offset !== undefined) {
@@ -399,15 +404,15 @@ async function poll(): Promise<void> {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("webhook") || msg.includes("Conflict")) {
-        console.log("Webhook conflict during polling, removing...");
+        rootLogger.warn("Webhook conflict during polling, removing...");
         try {
           await tg.deleteWebhook();
-          console.log("Webhook removed, resuming polling.");
+          rootLogger.info("Webhook removed, resuming polling");
         } catch (delErr) {
-          console.error("Failed to delete webhook:", delErr);
+          rootLogger.error({ err: delErr }, "Failed to delete webhook");
         }
       } else {
-        console.error("Polling error:", e);
+        rootLogger.error({ err: e }, "Polling error");
       }
       await Bun.sleep(3000);
     }
@@ -415,6 +420,6 @@ async function poll(): Promise<void> {
 }
 
 poll().catch((e) => {
-  console.error("Fatal error:", e);
+  rootLogger.fatal({ err: e }, "Fatal error");
   process.exit(1);
 });

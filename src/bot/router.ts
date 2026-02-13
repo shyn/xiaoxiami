@@ -6,6 +6,7 @@ import type { Config } from "../config.js";
 import { AuthStore } from "../auth.js";
 import { PermissionStore } from "../permissions-store.js";
 import { ChatController } from "./controller.js";
+import { createLogger, type Logger } from "../logger.js";
 
 export interface RouterOptions {
   config: Config;
@@ -23,6 +24,7 @@ export class Router {
   private messenger: Messenger;
   private fmt: Formatter;
   private createStreamSink: (convo: ConversationRef) => StreamSink;
+  private logger: Logger;
 
   private controllers = new Map<string, ChatController>();
   private controllerQueues = new Map<string, Promise<void>>();
@@ -38,6 +40,7 @@ export class Router {
     this.messenger = opts.messenger;
     this.fmt = opts.fmt;
     this.createStreamSink = opts.createStreamSink;
+    this.logger = createLogger({ component: "router" });
   }
 
   private controllerKey(convo: ConversationRef): string {
@@ -66,7 +69,7 @@ export class Router {
     const key = this.controllerKey(convo);
     const prev = this.controllerQueues.get(key) ?? Promise.resolve();
     const next = prev.then(fn, fn).catch((e) => {
-      console.error(`[queue=${key}] Unhandled error in queued task:`, e);
+      this.logger.error({ queueKey: key, err: e }, "Unhandled error in queued task");
     });
     this.controllerQueues.set(key, next);
   }
@@ -77,7 +80,7 @@ export class Router {
       if (now - lastUsed > Router.CONTROLLER_TTL_MS) {
         const ctrl = this.controllers.get(key);
         if (ctrl) {
-          console.log(`[cleanup] Disposing stale controller: ${key}`);
+          this.logger.info({ controllerKey: key }, "Disposing stale controller");
           ctrl.dispose();
           this.controllers.delete(key);
         }
@@ -112,7 +115,7 @@ export class Router {
     event: Extract<InboundEvent, { type: "action" }>,
   ): Promise<void> {
     const userId = Number(event.from.userId);
-    console.log(`[router] handleAction: actionId=${event.actionId}, data=${event.data}, userId=${userId}`);
+    this.logger.debug({ actionId: event.actionId, data: event.data, userId }, "handleAction");
     if (!this.auth.isAuthorized(userId)) {
       await this.messenger.ackAction?.(event.ackHandle, "Unauthorized.", true);
       return;
@@ -123,14 +126,14 @@ export class Router {
     // the queued prompt task is blocked waiting for this callback to resolve.
     if (event.actionId === "auth") {
       const ctrl = this.getController(event.convo);
-      console.log(`[router] Auth callback bypass queue: data=${event.data}`);
+      this.logger.debug({ data: event.data }, "Auth callback bypass queue");
       await ctrl.handleCallback(event.ackHandle, event.actionId, event.data);
       return;
     }
 
     this.enqueue(event.convo, async () => {
       const ctrl = this.getController(event.convo);
-      console.log(`[router] Routing to controller.handleCallback: actionId=${event.actionId}, data=${event.data}`);
+      this.logger.debug({ actionId: event.actionId, data: event.data }, "Routing to controller.handleCallback");
       await ctrl.handleCallback(event.ackHandle, event.actionId, event.data);
     });
   }

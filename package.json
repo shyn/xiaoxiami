@@ -14,9 +14,11 @@
     "build:wxwork": "bun build src/main-wxwork.ts --outdir ./dist --target bun"
   },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "*",
     "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
     "@sinclair/typebox": "^0.34.0",
-    "minimatch": "^10.0.1"
+    "minimatch": "^10.0.1",
+    "pino": "^10.3.1",
+    "pino-pretty": "^13.1.3"
   }
 }
