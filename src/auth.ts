@@ -34,13 +34,18 @@ export class AuthStore {
   }
 
   private load(): AuthData {
-    try {
-      if (existsSync(this.filePath)) {
+    if (existsSync(this.filePath)) {
+      try {
         const raw = readFileSync(this.filePath, "utf-8");
         return { ...DEFAULT_AUTH, ...JSON.parse(raw) };
+      } catch (e) {
+        console.error(`Failed to load auth file ${this.filePath}:`, e);
+        throw new Error(
+          `Failed to load existing auth file: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
       }
-    } catch (e) {
-      console.error(`Failed to load auth file ${this.filePath}:`, e);
     }
     return { ...DEFAULT_AUTH };
   }

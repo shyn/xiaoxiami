@@ -1,0 +1,4 @@
+## 2024-05-23 - Fail-Open Authentication on Config Corruption
+**Vulnerability:** The `AuthStore` silently caught errors when loading the `auth.json` file and defaulted to an empty/unpaired state. If the auth file was corrupted or unreadable (e.g. permission error), the bot would restart in an unpaired state, allowing any user to claim ownership by sending `/start`.
+**Learning:** Silently catching exceptions in critical security components (like authentication) can lead to fail-open scenarios where the system falls back to an insecure default state.
+**Prevention:** Always ensure critical configuration loading fails securely (crashes or enters safe mode) rather than falling back to an insecure default. Rethrow errors if they cannot be recovered from safely, ensuring the application cannot start in an insecure state.
