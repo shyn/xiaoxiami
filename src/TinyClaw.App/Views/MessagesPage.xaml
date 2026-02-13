@@ -1,0 +1,51 @@
+<Page x:Class="TinyClaw.App.Views.MessagesPage"
+               xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+               xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+               xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+               Title="Messages">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="Messages" Style="{StaticResource TitleTextBlockStyle}" Margin="0,0,0,16" />
+
+        <!-- Filter Bar -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,12">
+            <TextBlock Text="Channel:" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <ComboBox x:Name="ChannelCombo" Width="120" Margin="0,0,16,0"
+                      ItemsSource="{Binding Channels}"
+                      SelectedItem="{Binding ChannelFilter}"
+                      SelectionChanged="OnFilterChanged" />
+            <TextBlock Text="Status:" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <ComboBox x:Name="StatusCombo" Width="120" Margin="0,0,16,0"
+                      ItemsSource="{Binding Statuses}"
+                      SelectedItem="{Binding StatusFilter}"
+                      SelectionChanged="OnFilterChanged" />
+            <ui:Button Content="Refresh" Icon="{ui:SymbolIcon ArrowSync24}" Click="OnRefreshClick" />
+        </StackPanel>
+
+        <!-- Messages DataGrid -->
+        <DataGrid Grid.Row="2" ItemsSource="{Binding Messages}"
+                  AutoGenerateColumns="False" IsReadOnly="True"
+                  CanUserSortColumns="True" GridLinesVisibility="Horizontal"
+                  HeadersVisibility="Column" BorderThickness="1">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="80" />
+                <DataGridTextColumn Header="Channel" Binding="{Binding Channel}" Width="80" />
+                <DataGridTextColumn Header="Sender" Binding="{Binding Sender}" Width="100" />
+                <DataGridTextColumn Header="Agent" Binding="{Binding AgentId}" Width="80" />
+                <DataGridTextColumn Header="Content" Binding="{Binding Content}" Width="*">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="Time" Binding="{Binding CreatedAt, StringFormat='{}{0:MM/dd HH:mm:ss}'}" Width="130" />
+            </DataGrid.Columns>
+        </DataGrid>
+    </Grid>
+</Page>

@@ -1,0 +1,32 @@
+<ui:FluentWindow x:Class="TinyClaw.App.MainWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 xmlns:views="clr-namespace:TinyClaw.App.Views"
+                 Title="TinyClaw" Width="1100" Height="720"
+                 WindowStartupLocation="CenterScreen"
+                 ExtendsContentIntoTitleBar="True">
+
+    <Grid>
+        <ui:NavigationView x:Name="NavigationView"
+                           PaneDisplayMode="Left"
+                           IsBackButtonVisible="Collapsed">
+            <ui:NavigationView.Header>
+                <ui:BreadcrumbBar x:Name="BreadcrumbBar" />
+            </ui:NavigationView.Header>
+
+            <ui:NavigationView.MenuItems>
+                <ui:NavigationViewItem Content="Dashboard" Icon="{ui:SymbolIcon Home24}" TargetPageType="{x:Type views:DashboardPage}" />
+                <ui:NavigationViewItem Content="Messages" Icon="{ui:SymbolIcon Chat24}" TargetPageType="{x:Type views:MessagesPage}" />
+                <ui:NavigationViewItem Content="Agents" Icon="{ui:SymbolIcon Bot24}" TargetPageType="{x:Type views:AgentsPage}" />
+                <ui:NavigationViewItem Content="Teams" Icon="{ui:SymbolIcon People24}" TargetPageType="{x:Type views:TeamsPage}" />
+                <ui:NavigationViewItem Content="Logs" Icon="{ui:SymbolIcon Document24}" TargetPageType="{x:Type views:LogsPage}" />
+            </ui:NavigationView.MenuItems>
+
+            <ui:NavigationView.FooterMenuItems>
+                <ui:NavigationViewItem Content="Settings" Icon="{ui:SymbolIcon Settings24}" TargetPageType="{x:Type views:SettingsPage}" />
+            </ui:NavigationView.FooterMenuItems>
+
+        </ui:NavigationView>
+    </Grid>
+</ui:FluentWindow>
